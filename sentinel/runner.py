@@ -23,6 +23,18 @@ from sentinel.sources.http import HttpClient, HttpError
 from sentinel.store.db import Store
 
 GITHUB_TOKEN_ENV = "SENTINEL_GITHUB_TOKEN"  # noqa: S105 (env var name, not a secret)
+GITHUB_TOKEN_FILE = "github-token.txt"  # noqa: S105 (file name inside the git-ignored state dir)
+
+
+def github_token(home: Path) -> str:
+    """Token from the environment, else from <home>/github-token.txt (created by the user)."""
+    token = os.environ.get(GITHUB_TOKEN_ENV, "").strip()
+    if token:
+        return token
+    path = home / GITHUB_TOKEN_FILE
+    if path.exists():
+        return path.read_text(encoding="utf-8-sig").strip()
+    return ""
 
 
 def run_once(
@@ -67,10 +79,12 @@ def run_once(
 
             guard(f"scan:{target.name}", scan_one)
 
-    token = os.environ.get(GITHUB_TOKEN_ENV, "")
+    token = github_token(home)
     if settings.github_repos or settings.github_user_keys:
         if not token:
-            health["github"] = f"skipped: env {GITHUB_TOKEN_ENV} not set"
+            health["github"] = (
+                f"skipped: no token (env {GITHUB_TOKEN_ENV} or {home / GITHUB_TOKEN_FILE})"
+            )
         else:
             gh = GitHubCollector(http, token, key)
             if settings.github_user_keys:

@@ -78,6 +78,15 @@ def test_github_skipped_without_token(tmp_path: Path, monkeypatch: pytest.Monkey
     assert result["health"]["github"].startswith("skipped")
 
 
+def test_token_from_file_when_env_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(runner.GITHUB_TOKEN_ENV, raising=False)
+    assert runner.github_token(tmp_path) == ""
+    (tmp_path / runner.GITHUB_TOKEN_FILE).write_text("﻿file-token-value \r\n", encoding="utf-8")
+    assert runner.github_token(tmp_path) == "file-token-value"
+    monkeypatch.setenv(runner.GITHUB_TOKEN_ENV, "env-token-value")
+    assert runner.github_token(tmp_path) == "env-token-value"  # env wins
+
+
 def test_alerts_only_for_real_high_incidents(tmp_path: Path) -> None:
     store = Store(tmp_path / "s.db")
     home = tmp_path / "home"
