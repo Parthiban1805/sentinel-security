@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Internal AI & developer security system: detect, correlate, respond, verify"
 requires-python = ">=3.11"
 dependencies = [
+    "google-auth==2.36.0",
     "jsonschema==4.23.0",
+    "requests==2.32.3",
 ]
 
 [project.scripts]
@@ -37,6 +39,7 @@ select = ["E", "F", "I", "B", "UP", "S"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S603", "S607", "E501"]
 "scripts/**" = ["S603", "S607"]
+"sentinel/alerts.py" = ["E501"]  # embedded PowerShell script
 
 [tool.mypy]
 python_version = "3.11"

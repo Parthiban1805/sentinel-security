@@ -132,4 +132,11 @@ def summary_report(store: Store, now: datetime) -> str:
             for i in incidents
         ],
     ]
+    last_run = store.get_doc("snapshots", "health:last_run")
+    lines += ["", "## Collector health (last `sentinel run`)"]
+    if last_run is None:
+        lines.append("- No continuous run recorded yet.")
+    else:
+        lines.append(f"- Run at {last_run['time']}")
+        lines += [f"- {name}: {state}" for name, state in sorted(last_run["health"].items())]
     return "\n".join(lines) + "\n"

@@ -42,5 +42,23 @@ New rules: use the spec format in `.claude/skills/correlation-rule-authoring/SKI
 ### R7: canary used
 - **Inputs:** any `canary_triggered`. **Output:** Critical, confidence high (decoys have no legitimate use).
 
+## Implemented in v0.2 (real GitHub signals; tests in `tests/sentinel/test_collectors.py`)
+
+### R2: risky workflow change by a non-maintainer
+- **Inputs:** `workflow_changed` with attributes `adds_network`, `adds_secret_ref` (computed from ADDED diff
+  lines only; the diff is never stored) and `actor_is_maintainer` (actor committed to the repo in the 90 days
+  before the change). **Output:** High, confidence medium.
+- **False positives:** new legitimate contributors. **Gaps:** obfuscated network calls; actions referenced
+  by `uses:` are not inspected (S8 needs action-ref pinning checks).
+
+### R8: workflow change shortly before a release
+- **Inputs:** `workflow_changed` then `release_published` on the same repo asset. **Window:** 0 to 24h `[confirm]`.
+- **Output:** High floor, confidence low (most such releases are normal); a provenance review is the required step.
+
+### Data-source limits (facts, `docs/research/collectors.md`)
+- R1 with Google data: usage = per-key request volume above max(3x 7-day hourly mean, floor), or any use of a
+  key whose finding is revoked/verified. Google gives no caller IP/region; data is up to ~30 min late.
+- R6 cannot see logins for personal GitHub accounts (no security-log API found); only `ssh_key_added` is collected.
+
 All rules are pure functions, deterministic and order independent. Events with `is_test: true` produce test
 incidents that are counted in metrics only.

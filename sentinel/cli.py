@@ -10,8 +10,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sentinel import __version__, findings
-from sentinel.events.schema import SchemaError
+from sentinel import __version__, config, findings, runner
+from sentinel.events.schema import SchemaError, format_time
 from sentinel.incidents import lifecycle
 from sentinel.incidents.lifecycle import IncidentError
 from sentinel.incidents.response import DryRunAdapter
@@ -21,6 +21,8 @@ from sentinel.reporting import markdown
 from sentinel.scanners import gitleaks
 from sentinel.security import fingerprint, load_key
 from sentinel.simulation import scenarios
+from sentinel.sources.gcp import AdcTokenProvider, GcpCollector, alias_key, normalize_credential_id
+from sentinel.sources.http import HttpClient, HttpError
 from sentinel.store.db import Store
 
 
@@ -230,6 +232,45 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_inventory_alias(args: argparse.Namespace) -> int:
+    store = _store(args)
+    uid = normalize_credential_id(args.credential_id)
+    doc = {
+        "cred_ref": args.cred_ref,
+        "provider": "gcp",
+        "project": args.project,
+        "uid": uid,
+        "confirmed_by": args.actor,
+        "time": format_time(_now()),
+    }
+    store.put_doc("aliases", alias_key(args.project, uid), doc)
+    store.add_audit(doc["time"], {"action": "alias", **doc})
+    print(f"aliased gcp {args.project} key {uid} -> {args.cred_ref} (confirmed by {args.actor})")
+    return 0
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    settings = config.load(Path(args.config))
+    result = runner.run_once(_store(args), _home(args), settings, _now(), scan=not args.no_scan)
+    print(
+        f"run {result['time']}: {result['events_stored']} new event(s), "
+        f"{len(result['incidents_created'])} new incident(s), {len(result['alerts'])} alert(s)"
+    )
+    for name, state in sorted(result["health"].items()):
+        print(f"  {name}: {state}")
+    for line in result["alerts"]:
+        print(f"  ALERT {line}")
+    return 0 if all(s == "ok" for s in result["health"].values()) else 2
+
+
+def cmd_incident_verify_key(args: argparse.Namespace) -> int:
+    collector = GcpCollector(HttpClient(), AdcTokenProvider())
+    passed, evidence = runner.verify_key(_store(args), args.id, args.actor, _now(), collector)
+    print(f"{args.id}: revoke_credential {'VERIFIED' if passed else 'verification FAILED'}")
+    print(f"  evidence: {evidence}")
+    return 0 if passed else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sentinel", description="Sentinel security system")
     parser.add_argument("--version", action="version", version=f"sentinel {__version__}")
@@ -282,6 +323,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("asset")
     p.add_argument("--permission", required=True)
     p.add_argument("--actor", required=True)
+    p = add(inv, "alias", cmd_inventory_alias, help="map a provider key id to a credential ref")
+    p.add_argument("cred_ref")
+    p.add_argument("--project", required=True, help="GCP project id")
+    p.add_argument("--credential-id", required=True, help="key uid or 'apikey:<uid>'")
+    p.add_argument("--actor", required=True)
+
+    p = add(sub, "run", cmd_run, help="one pass: scan, collect, correlate, alert")
+    p.add_argument("--config", default="sentinel.toml")
+    p.add_argument("--no-scan", action="store_true", help="skip local secret scans")
 
     p = add(sub, "simulate", cmd_simulate, help="inject simulated (test) source events")
     p.add_argument("scenario", choices=["usage", "spend", "login-token", "canary"])
@@ -311,6 +361,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--actor", required=True)
     p.add_argument("--evidence", required=True)
     p.add_argument("--fail", action="store_true", help="verification did NOT pass")
+    p = add(inc, "verify-key", cmd_incident_verify_key, help="verify revocation from Google Cloud")
+    p.add_argument("id")
+    p.add_argument("--actor", required=True)
     p = add(inc, "close", cmd_incident_close)
     p.add_argument("id")
     p.add_argument("--actor", required=True)
@@ -328,6 +381,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return int(args.func(args))
-    except (gitleaks.ScanError, IncidentError, SchemaError, ValueError, KeyError) as exc:
+    except (gitleaks.ScanError, HttpError, IncidentError, SchemaError, ValueError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
