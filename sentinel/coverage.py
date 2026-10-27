@@ -37,6 +37,7 @@ REAL_PRODUCERS = {
     "workflow_changed": "github collector",
     "release_published": "github collector",
     "config_drift": "hygiene checks (sentinel hygiene)",
+    "dependency_added": "dependency snapshots (sentinel run)",
 }
 SIMULATION_ONLY = {
     "login_anomaly": "no login-history API for personal GitHub accounts",

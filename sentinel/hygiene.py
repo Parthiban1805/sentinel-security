@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from sentinel import dependencies
 from sentinel.events.schema import make_event
 
 SEVERITIES = ("low", "medium", "high")
@@ -77,6 +78,11 @@ CHECKS = {
     "W4": "workflow has no permissions block (default token may be broad)",
     "W5": "workflow grants write-all permissions",
     "W6": "untrusted GitHub context used inside a run script (script injection)",
+    "D1": "dependency name closely imitates a popular package (possible typosquat: HYPOTHESIS)",
+    "D2": "dependency version is not pinned",
+    "D3": "manifest has no lockfile",
+    "D4": "install-time scripts can run code when dependencies are installed",
+    "D5": "dependency comes from a URL, a git repository or a custom package index",
 }
 
 _SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -231,11 +237,63 @@ def check_workflows(repo: Path) -> list[Finding]:
     return out
 
 
+def check_dependencies(repo: Path) -> list[Finding]:
+    info = dependencies.collect(repo)
+    out: list[Finding] = []
+    unpinned: dict[str, list[str]] = {}
+    for dep in info.dependencies:
+        if dependencies.is_url_dependency(dep):
+            out.append(Finding("D5", "medium", dep.source, f"{CHECKS['D5']}: {dep.name[:60]}"))
+            continue
+        if not dep.dev:
+            squat = dependencies.typosquat_of(dep.ecosystem, dep.name)
+            if squat:
+                out.append(
+                    Finding(
+                        "D1", "medium", dep.source, f"{CHECKS['D1']}: {dep.name} looks like {squat}"
+                    )
+                )
+        # A lockfile pins the real versions, so ranges in the manifest are fine (not noise).
+        if not dependencies.is_pinned(dep) and dep.source not in info.locked_manifests:
+            unpinned.setdefault(dep.source, []).append(dep.name)
+    for source, names in sorted(unpinned.items()):
+        shown = ", ".join(names[:5]) + (f" and {len(names) - 5} more" if len(names) > 5 else "")
+        out.append(Finding("D2", "low", source, f"{CHECKS['D2']}: {shown}"))
+    for note in info.index_notes:
+        source, _, text = note.partition(": ")
+        out.append(Finding("D5", "medium", source, f"{CHECKS['D5']}: {text}"))
+    for manifest in info.missing_lockfiles:
+        out.append(Finding("D3", "medium", manifest, CHECKS["D3"]))
+    for manifest, hooks in info.own_install_hooks.items():
+        out.append(
+            Finding(
+                "D4",
+                "medium",
+                manifest,
+                f"{CHECKS['D4']}: this project declares {', '.join(hooks)}",
+            )
+        )
+    for lockfile, names in info.lockfile_install_scripts.items():
+        shown = ", ".join(names[:5]) + (f" and {len(names) - 5} more" if len(names) > 5 else "")
+        out.append(
+            Finding(
+                "D4", "low", lockfile, f"{CHECKS['D4']}: packages with install scripts: {shown}"
+            )
+        )
+    return out
+
+
 def scan_repo(repo: Path, ignore: tuple[str, ...] = ()) -> list[Finding]:
     """Run every check. `ignore` entries look like "H2:server/.env" or "W4:*"."""
     if not (repo / ".git").exists():
         return []
-    found = check_files(repo) + check_gitignore(repo) + check_scanning(repo) + check_workflows(repo)
+    found = (
+        check_files(repo)
+        + check_gitignore(repo)
+        + check_scanning(repo)
+        + check_workflows(repo)
+        + check_dependencies(repo)
+    )
     return [f for f in found if not _ignored(f, ignore)]
 
 

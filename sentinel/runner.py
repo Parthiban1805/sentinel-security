@@ -10,7 +10,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-from sentinel import agentlog, alerts, findings, hygiene
+from sentinel import agentlog, alerts, dependencies, findings, hygiene
 from sentinel.config import Settings
 from sentinel.events.schema import format_time
 from sentinel.incidents import lifecycle
@@ -82,7 +82,15 @@ def run_once(
             def hygiene_one(target: Path = target) -> int:
                 found = hygiene.scan_repo(target, settings.hygiene_ignore)
                 asset = asset_id_for(target)
-                return add(hygiene.to_events(target, asset, found, now))
+                stored_count = add(hygiene.to_events(target, asset, found, now))
+                # New dependencies since the last run (first run = baseline only). The snapshot
+                # advances only after the events were stored.
+                deps = dependencies.collect(target).dependencies
+                previous = store.get_doc("snapshots", dependencies.snapshot_key(asset))
+                events, snapshot = dependencies.new_dependency_events(asset, deps, previous, now)
+                stored_count += add(events)
+                store.put_doc("snapshots", dependencies.snapshot_key(asset), snapshot)
+                return stored_count
 
             guard(f"hygiene:{target.name}", hygiene_one)
 

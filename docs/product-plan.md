@@ -110,8 +110,11 @@ H1 sensitive file tracked, H2 untracked and not ignored, H3 `.gitignore` gaps, H
 H6 repo-dump or database files; workflow checks W1 unpinned actions, W2 and W3 `pull_request_target`, W4 and W5 permissions,
 W6 script injection. Findings become `config_drift` events (idempotent), `sentinel run` includes it, `--fail-on` gates CI,
 `[hygiene] ignore` records documented exceptions. A real run on six repos found tracked `.env` files, a not-ignored `.env`
-and unignored repomix dumps. **Still to build:** dependency checks (S7), canaries, exposure probes (S1, S15), GitHub
-protection audit, the `sentinel init` wizard.
+and unignored repomix dumps. **Dependency checks (S7) built:** D1 typosquat (hypothesis), D2 unpinned (only without a lockfile), D3 no lockfile, D4 install
+scripts, D5 URL, git or custom-index dependencies, plus `dependency_added` events from snapshot diffs (284 tests); doc
+`docs/scenarios/S7-typosquatted-package.md`. A first real run produced noise (every npm project flagged for ranges), which was
+fixed by trusting lockfiles. **Still to build:** canaries, exposure probes (S1, S15), GitHub protection audit, the
+`sentinel init` wizard, and rule R3 (needs endpoint telemetry).
 - `sentinel hygiene`: tracked `.env`, missing `.gitignore` entries, missing pre-commit hook, dump files.
 - Workflow policy checks (S8, S9, S10): unpinned actions, `pull_request_target` on untrusted code, broad permissions;
   extend R2. Dependency checks (S7): new dependency, typosquat heuristics, install scripts, lockfile pinning
