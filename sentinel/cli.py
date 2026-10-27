@@ -25,7 +25,7 @@ from sentinel import (
     runner,
 )
 from sentinel.events.schema import SchemaError, format_time
-from sentinel.incidents import lifecycle
+from sentinel.incidents import lifecycle, summary, watch
 from sentinel.incidents.lifecycle import IncidentError
 from sentinel.incidents.response import DryRunAdapter
 from sentinel.inventory import assets as inventory
@@ -234,6 +234,20 @@ def cmd_incident_close(args: argparse.Namespace) -> int:
     )
     print(f"{args.id}: closed, verified={incident['verified']}")
     return 0
+
+
+def cmd_incident_summary(args: argparse.Namespace) -> int:
+    incident = _store(args).get_doc("incidents", args.id)
+    if incident is None:
+        raise KeyError(f"unknown incident: {args.id}")
+    print(summary.render(incident), end="")
+    return 0
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    data = watch.report(_store(args), _now(), args.stale_hours)
+    print(watch.format_report(data), end="")
+    return 1 if data["verification_failed"] or any(r["stale"] for r in data["open"]) else 0
 
 
 def cmd_report(args: argparse.Namespace) -> int:
@@ -588,6 +602,17 @@ def cmd_incident_verify_key(args: argparse.Namespace) -> int:
     return 0 if passed else 1
 
 
+def cmd_incident_verify_ssh_key(args: argparse.Namespace) -> int:
+    token = runner.github_token(_home(args))
+    if not token:
+        raise ValueError(f"no GitHub token (env {runner.GITHUB_TOKEN_ENV} or the state-dir file)")
+    gh = GitHubCollector(HttpClient(), token, load_key(_home(args)))
+    passed, evidence = runner.verify_ssh_key(_store(args), args.id, args.actor, _now(), gh)
+    print(f"{args.id}: revoke_token_or_ssh_key {'VERIFIED' if passed else 'verification FAILED'}")
+    print(f"  evidence: {evidence}")
+    return 0 if passed else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sentinel", description="Sentinel security system")
     parser.add_argument("--version", action="version", version=f"sentinel {__version__}")
@@ -765,6 +790,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = add(inc, "verify-probe", cmd_incident_verify_probe, help="re-probe an exposed path (R10)")
     p.add_argument("id")
     p.add_argument("--actor", required=True)
+    p = add(inc, "verify-ssh-key", cmd_incident_verify_ssh_key, help="verify SSH key removal (R6)")
+    p.add_argument("id")
+    p.add_argument("--actor", required=True)
+    p = add(inc, "summary", cmd_incident_summary, help="local plain summary (no AI, no network)")
+    p.add_argument("id")
     p = add(inc, "close", cmd_incident_close)
     p.add_argument("id")
     p.add_argument("--actor", required=True)
@@ -775,6 +805,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = add(sub, "report", cmd_report, help="baseline or incident report (markdown)")
     p.add_argument("--incident")
     p.add_argument("--out")
+    p = add(sub, "watch", cmd_watch, help="verification watch: stale, failed, unverified incidents")
+    p.add_argument("--stale-hours", type=int, default=24)
     return parser
 
 

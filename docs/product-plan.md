@@ -127,6 +127,15 @@ built:** `sentinel audit` and a daily pass in `sentinel run` report default-bran
 scanning and push protection; a plan limit, a missing token permission ("cannot verify") and a rejected token (401, a health failure) are
 told apart. Run live, it found that the configured token is being rejected by GitHub (expired or revoked); the product now says so clearly.
 **v0.4 is functionally complete** (391 tests). Remaining from the original list: rule R3, which needs endpoint telemetry (v0.8).
+**v0.5 "verification watch" in progress:** rule R11 (use of a credential after its revocation was verified; the finding records
+`verified_at`) and `incident verify-ssh-key` (R6: passes only when every flagged SSH key id is absent from a fresh, successful
+`/user/keys` listing; a failed listing never counts as proof; SSH keys only, tokens stay a human attestation).
+**Verification watch built:** `sentinel watch` lists open incidents (stale after 24h by default), steps whose verification failed
+and incidents closed without verification (exit 1 if any failed or stale); `sentinel run` re-probes the path of every open real R10
+incident at most every 6 hours, so a fix is verified without anyone typing a command. 418 tests.
+**v0.6 started (ADR-0010):** `sentinel incident summary <ID>` is a local, summary-only template. It makes no network call,
+uses no AI model, copies only an allow-listed set of fields, never proposes actions, and refuses to print credential-shaped
+text. An outside AI service would need a new ADR and a README first. 423 tests.
 - `sentinel hygiene`: tracked `.env`, missing `.gitignore` entries, missing pre-commit hook, dump files.
 - Workflow policy checks (S8, S9, S10): unpinned actions, `pull_request_target` on untrusted code, broad permissions;
   extend R2. Dependency checks (S7): new dependency, typosquat heuristics, install scripts, lockfile pinning

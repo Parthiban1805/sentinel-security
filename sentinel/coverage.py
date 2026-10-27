@@ -30,6 +30,7 @@ _REVOKED = make_cred_ref("ef" * 8)  # a credential whose revocation was verified
 AUTO_VERIFIED_STEPS = {
     "revoke_credential": "Google API key status (verify-key)",
     "verify_path_closed": "re-probe of the exposed path (verify-probe)",
+    "revoke_token_or_ssh_key": "GitHub /user/keys listing (verify-ssh-key; SSH keys only)",
 }
 
 # Which event types have a real producer today, which are simulation-only, and the rest have none.

@@ -283,7 +283,8 @@ def test_run_gates_by_interval_and_reports_unreachable_hosts(tmp_path: Path) -> 
         assert first["health"][label] == "ok" and len(first["incidents_created"]) == 1
         again = runner.run_once(store, home, settings, NOW, scan=False, probe_pause=0)
         assert again["events_stored"] == 0  # inside the interval: not probed again
-        assert len(srv.handler.hits) == len(probes.PROBES)  # exactly one sweep
+        # one sweep, plus one re-probe of the open incident's path (verification watch)
+    assert len(srv.handler.hits) == len(probes.PROBES) + 1
     dead = Settings(probe_hosts=(config.ProbeHost("http://127.0.0.1:9", True),))
     res = runner.run_once(store, home, dead, NOW, scan=False, probe_pause=0)
     assert res["health"][next(k for k in res["health"] if k.startswith("probes:"))].startswith(

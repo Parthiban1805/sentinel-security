@@ -247,6 +247,9 @@ def run_once(
 
         guard("agentlog", check_agent_log)
 
+    if probe_fetch is not None or settings.probe_hosts:
+        guard("reverify:paths", lambda: reverify_open_paths(store, now, probe_fetch))
+
     created = lifecycle.open_incidents(store, now)
     alerted = []
     for iid in created:
@@ -296,6 +299,66 @@ def verify_key(
     evidence = f"apikeys.list (showDeleted) at {format_time(now)}: " + "; ".join(results)
     lifecycle.verify(store, iid, "revoke_credential", actor, now, passed=passed, evidence=evidence)
     return passed, evidence
+
+
+def verify_ssh_key(
+    store: Store, iid: str, actor: str, now: datetime, collector: GitHubCollector
+) -> tuple[bool, str]:
+    """Verify revoke_token_or_ssh_key: every flagged SSH key id must be absent from a fresh,
+    successful /user/keys listing. A failed listing raises; it never counts as proof."""
+    incident = store.get_doc("incidents", iid)
+    if incident is None:
+        raise KeyError(f"unknown incident: {iid}")
+    if incident["rule_id"] != "R6":
+        raise ValueError("verify-ssh-key applies to new-key incidents (rule R6) only")
+    wanted = {t["event_id"] for t in incident["timeline"]}
+    events = [e for e in store.events() if e["event_id"] in wanted]
+    if any(e["event_type"] == "token_created" for e in events):
+        raise ValueError("the incident also flags a token, which cannot be verified automatically")
+    key_ids = sorted(
+        str(e["attributes"]["key_id"])
+        for e in events
+        if e["event_type"] == "ssh_key_added" and "key_id" in e["attributes"]
+    )
+    if not key_ids:
+        raise ValueError("the incident has no recorded SSH key id to verify")
+    present = collector.list_user_key_ids()
+    still = [k for k in key_ids if k in present]
+    passed = not still
+    lines = [f"key {k}: {'STILL PRESENT' if k in present else 'absent'}" for k in key_ids]
+    evidence = f"GET /user/keys at {format_time(now)}: " + "; ".join(lines)
+    lifecycle.verify(
+        store, iid, "revoke_token_or_ssh_key", actor, now, passed=passed, evidence=evidence
+    )
+    return passed, evidence
+
+
+def reverify_open_paths(
+    store: Store,
+    now: datetime,
+    fetch: probes.FetchFn | None,
+    min_gap: timedelta = timedelta(hours=6),
+) -> int:
+    """Re-probe the exposed path of every open real R10 incident whose verify_path_closed step is
+    not verified yet. Read-only; an inconclusive probe records a failed verification,
+    never a pass."""
+    for incident in store.docs("incidents"):
+        if incident["status"] != "open" or incident["rule_id"] != "R10" or incident["is_test"]:
+            continue
+        step = next(s for s in incident["response_plan"] if s["step"] == "verify_path_closed")
+        if step["state"] == "verified":
+            continue
+        last = step["events"][-1]["time"] if step["events"] else None
+        if last and now - datetime.fromisoformat(last.replace("Z", "+00:00")) < min_gap:
+            continue  # checked recently: do not pile up evidence entries every run
+        verify_probe(
+            store,
+            incident["id"],
+            "sentinel-auto",
+            now,
+            fetch or probes.make_fetcher(allow_http=True),
+        )
+    return 0  # verifications are not new events
 
 
 def verify_probe(

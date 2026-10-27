@@ -82,6 +82,11 @@ class GitHubCollector(DeferredState):
         return repo_probe, self._try(f"{base}/branches/{branch}/protection")
 
     # SSH keys -----------------------------------------------------------------------
+    def list_user_key_ids(self) -> set[str]:
+        """Ids of the account's SSH keys right now (read-only). Raises HttpError on any failure:
+        a failed listing proves nothing about a key being gone."""
+        return {str(k["id"]) for k in self._get_all(f"{API}/user/keys?per_page=100")}
+
     def collect_user_keys(self, store: Store, now: datetime) -> list[dict[str, Any]]:
         me = self._client.get(f"{API}/user", self._headers).json()
         keys = self._get_all(f"{API}/user/keys?per_page=100")
