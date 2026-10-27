@@ -1,17 +1,26 @@
-"""Sentinel command-line entry point."""
+"""Sentinel command-line entry point (thin layer over the library modules)."""
 
 import argparse
 import getpass
+import json
 import os
-import re
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from sentinel import __version__, findings
+from sentinel.events.schema import SchemaError
+from sentinel.incidents import lifecycle
+from sentinel.incidents.lifecycle import IncidentError
+from sentinel.incidents.response import DryRunAdapter
+from sentinel.inventory import assets as inventory
+from sentinel.inventory.blast import link
+from sentinel.reporting import markdown
 from sentinel.scanners import gitleaks
 from sentinel.security import fingerprint, load_key
+from sentinel.simulation import scenarios
 from sentinel.store.db import Store
 
 
@@ -23,25 +32,25 @@ def _store(args: argparse.Namespace) -> Store:
     return Store(_home(args) / "sentinel.db")
 
 
-def _asset_id(path: Path) -> str:
-    return "repo-" + re.sub(r"[^a-z0-9]+", "-", path.resolve().name.lower()).strip("-")
+def _now() -> datetime:
+    return datetime.now(UTC)
 
 
+# scan and findings ---------------------------------------------------------
 def cmd_scan(args: argparse.Namespace) -> int:
     home, store = _home(args), _store(args)
     key = load_key(home)
     target = Path(args.path)
-    asset_id = _asset_id(target)
-    now = datetime.now(UTC)
+    asset_id = inventory.asset_id_for(target)
     found = gitleaks.run(target, "dir", key, home)
     if args.history and (target / ".git").exists():
         found += gitleaks.run(target, "git", key, home)
-    new = findings.ingest(store, asset_id, found, now)
+    new = findings.ingest(store, asset_id, found, _now())
     print(f"{asset_id}: {len(found)} hit(s), {len(new)} new credential(s)")
     for ref in new:
-        doc = store.get_doc("findings", ref)
-        loc = doc["locations"][0] if doc else {}
-        print(f"  NEW {ref}  {doc['rule_id'] if doc else ''}  {loc.get('file')}:{loc.get('line')}")
+        doc = store.get_doc("findings", ref) or {}
+        loc = (doc.get("locations") or [{}])[0]
+        print(f"  NEW {ref}  {doc.get('rule_id')}  {loc.get('file')}:{loc.get('line')}")
     return 0
 
 
@@ -60,7 +69,7 @@ def cmd_findings_accept(args: argparse.Namespace) -> int:
         args.cred_ref,
         "risk_accepted",
         actor=args.actor,
-        now=datetime.now(UTC),
+        now=_now(),
         accept_days=args.days,
         note=args.note,
     )
@@ -74,7 +83,7 @@ def cmd_findings_resolve(args: argparse.Namespace) -> int:
         args.cred_ref,
         args.status,
         actor=args.actor,
-        now=datetime.now(UTC),
+        now=_now(),
         evidence=args.evidence,
         note=args.note,
     )
@@ -90,42 +99,228 @@ def cmd_fingerprint(args: argparse.Namespace) -> int:
     return 0
 
 
+# inventory ---------------------------------------------------------------------
+def cmd_inventory_discover(args: argparse.Namespace) -> int:
+    added = inventory.discover(_store(args), Path(args.root), _now())
+    print(f"registered {len(added)} new repo asset(s), all unowned until you assign owners")
+    return 0
+
+
+def cmd_inventory_import(args: argparse.Namespace) -> int:
+    print(f"imported {inventory.import_assets(_store(args), Path(args.file))} asset(s)")
+    return 0
+
+
+def cmd_inventory_check(args: argparse.Namespace) -> int:
+    for name, ids in inventory.gaps(_store(args)).items():
+        print(f"{name}: {', '.join(ids) or 'none'}")
+    return 0
+
+
+def cmd_inventory_link(args: argparse.Namespace) -> int:
+    link(_store(args), args.cred_ref, args.asset, args.permission, args.actor, _now())
+    print(f"linked {args.cred_ref} -> {args.asset} ({args.permission}), confirmed by {args.actor}")
+    return 0
+
+
+# simulation and ingest --------------------------------------------------------------
+def _store_events(store: Store, events: list[dict[str, Any]]) -> int:
+    return sum(store.add_event(e) for e in events)
+
+
+def cmd_simulate(args: argparse.Namespace) -> int:
+    now = _now()
+    make: dict[str, Callable[[], list[dict[str, Any]]]] = {
+        "usage": lambda: scenarios.provider_usage(args.cred, args.asset, now),
+        "spend": lambda: scenarios.spend_spike(args.asset, now, args.multiple),
+        "login-token": lambda: scenarios.login_then_token(args.who, args.asset, now),
+        "canary": lambda: scenarios.canary(args.asset, now),
+    }
+    print(f"simulated {_store_events(_store(args), make[args.scenario]())} test event(s)")
+    return 0
+
+
+def cmd_ingest(args: argparse.Namespace) -> int:
+    store = _store(args)
+    stored = 0
+    for number, line in enumerate(Path(args.file).read_text(encoding="utf-8").splitlines(), 1):
+        if line.strip():
+            try:
+                stored += store.add_event(json.loads(line))
+            except (SchemaError, json.JSONDecodeError) as exc:
+                raise ValueError(f"line {number}: {type(exc).__name__}") from exc
+    print(f"ingested {stored} event(s)")
+    return 0
+
+
+# correlate and incidents --------------------------------------------------------------
+def cmd_correlate(args: argparse.Namespace) -> int:
+    created = lifecycle.open_incidents(_store(args), _now())
+    print(f"{len(created)} new incident(s)")
+    for iid in created:
+        print(f"  {iid}")
+    return 0
+
+
+def cmd_incident_list(args: argparse.Namespace) -> int:
+    for i in _store(args).docs("incidents"):
+        flag = " (test)" if i["is_test"] else ""
+        print(f"{i['id']}  {i['status']:<7} {i['severity']:<9} {i['rule_id']}  {i['title']}{flag}")
+    return 0
+
+
+def cmd_incident_show(args: argparse.Namespace) -> int:
+    incident = _store(args).get_doc("incidents", args.id)
+    if incident is None:
+        raise KeyError(f"unknown incident: {args.id}")
+    print(markdown.incident_report(incident), end="")
+    return 0
+
+
+def cmd_incident_approve(args: argparse.Namespace) -> int:
+    lifecycle.approve(_store(args), args.id, args.step, args.actor, _now())
+    print(f"{args.id}: step {args.step} approved by {args.actor}")
+    return 0
+
+
+def cmd_incident_execute(args: argparse.Namespace) -> int:
+    result = lifecycle.execute(
+        _store(args), args.id, args.step, args.actor, _now(), DryRunAdapter()
+    )
+    print(result.detail)
+    return 0 if result.ok else 1
+
+
+def cmd_incident_verify(args: argparse.Namespace) -> int:
+    lifecycle.verify(
+        _store(args),
+        args.id,
+        args.step,
+        args.actor,
+        _now(),
+        passed=not args.fail,
+        evidence=args.evidence,
+    )
+    print(f"{args.id}: step {args.step} {'verification FAILED' if args.fail else 'verified'}")
+    return 0
+
+
+def cmd_incident_close(args: argparse.Namespace) -> int:
+    incident = lifecycle.close(
+        _store(args), args.id, args.actor, _now(), unverified_note=args.unverified_note
+    )
+    print(f"{args.id}: closed, verified={incident['verified']}")
+    return 0
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    store = _store(args)
+    if args.incident:
+        incident = store.get_doc("incidents", args.incident)
+        if incident is None:
+            raise KeyError(f"unknown incident: {args.incident}")
+        text = markdown.incident_report(incident)
+    else:
+        text = markdown.summary_report(store, _now())
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+        print(f"wrote {args.out}")
+    else:
+        print(text, end="")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sentinel", description="Sentinel security system")
     parser.add_argument("--version", action="version", version=f"sentinel {__version__}")
     parser.add_argument("--home", help="state directory (default: $SENTINEL_HOME or .sentinel)")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    scan = sub.add_parser("scan", help="scan a repo/folder for secrets (fingerprints only)")
-    scan.add_argument("path")
-    scan.add_argument("--history", action="store_true", help="also scan all Git history")
-    scan.set_defaults(func=cmd_scan)
+    def add(group: Any, name: str, func: Callable[[argparse.Namespace], int], **kw: Any) -> Any:
+        p = group.add_parser(name, **kw)
+        p.set_defaults(func=func)
+        return p
+
+    p = add(sub, "scan", cmd_scan, help="scan a repo/folder for secrets (fingerprints only)")
+    p.add_argument("path")
+    p.add_argument("--history", action="store_true", help="also scan all Git history")
 
     fnd = sub.add_parser("findings", help="findings registry").add_subparsers(
         dest="sub", required=True
     )
-    lst = fnd.add_parser("list")
-    lst.set_defaults(func=cmd_findings_list)
-    acc = fnd.add_parser("accept", help="accept risk with an expiry")
-    acc.add_argument("cred_ref")
-    acc.add_argument("--days", type=int, default=90)
-    acc.add_argument("--actor", required=True)
-    acc.add_argument("--note")
-    acc.set_defaults(func=cmd_findings_accept)
-    res = fnd.add_parser("resolve", help="record revocation (verified needs evidence)")
-    res.add_argument("cred_ref")
-    res.add_argument(
+    add(fnd, "list", cmd_findings_list)
+    p = add(fnd, "accept", cmd_findings_accept, help="accept risk with an expiry")
+    p.add_argument("cred_ref")
+    p.add_argument("--days", type=int, default=90)
+    p.add_argument("--actor", required=True)
+    p.add_argument("--note")
+    p = add(
+        fnd, "resolve", cmd_findings_resolve, help="record revocation (verified needs evidence)"
+    )
+    p.add_argument("cred_ref")
+    p.add_argument(
         "--status",
         required=True,
         choices=["revoke_pending", "revoked_unverified", "revoked_verified"],
     )
-    res.add_argument("--actor", required=True)
-    res.add_argument("--evidence")
-    res.add_argument("--note")
-    res.set_defaults(func=cmd_findings_resolve)
+    p.add_argument("--actor", required=True)
+    p.add_argument("--evidence")
+    p.add_argument("--note")
 
-    fp = sub.add_parser("fingerprint", help="fingerprint a key to match a finding")
-    fp.set_defaults(func=cmd_fingerprint)
+    add(sub, "fingerprint", cmd_fingerprint, help="fingerprint a key to match a finding")
+
+    inv = sub.add_parser("inventory", help="asset inventory").add_subparsers(
+        dest="sub", required=True
+    )
+    p = add(inv, "discover", cmd_inventory_discover, help="register Git repos under a folder")
+    p.add_argument("root")
+    p = add(inv, "import", cmd_inventory_import, help="import asset records (JSON list)")
+    p.add_argument("file")
+    add(inv, "check", cmd_inventory_check, help="list unowned/unapproved/unmonitored assets")
+    p = add(inv, "link", cmd_inventory_link, help="record a human-confirmed credential->asset link")
+    p.add_argument("cred_ref")
+    p.add_argument("asset")
+    p.add_argument("--permission", required=True)
+    p.add_argument("--actor", required=True)
+
+    p = add(sub, "simulate", cmd_simulate, help="inject simulated (test) source events")
+    p.add_argument("scenario", choices=["usage", "spend", "login-token", "canary"])
+    p.add_argument("--cred", default="cred-fp-0000")
+    p.add_argument("--asset", default="provider-demo")
+    p.add_argument("--who", default="ab12cd34", help="hex id for the simulated identity")
+    p.add_argument("--multiple", type=float, default=5.0)
+
+    p = add(sub, "ingest", cmd_ingest, help="load events from a JSONL file (schema-validated)")
+    p.add_argument("file")
+    add(sub, "correlate", cmd_correlate, help="run rules and open incidents")
+
+    inc = sub.add_parser("incident", help="incident workflow").add_subparsers(
+        dest="sub", required=True
+    )
+    add(inc, "list", cmd_incident_list)
+    p = add(inc, "show", cmd_incident_show)
+    p.add_argument("id")
+    for name, func in (("approve", cmd_incident_approve), ("execute", cmd_incident_execute)):
+        p = add(inc, name, func)
+        p.add_argument("id")
+        p.add_argument("step")
+        p.add_argument("--actor", required=True)
+    p = add(inc, "verify", cmd_incident_verify, help="record verification evidence for a step")
+    p.add_argument("id")
+    p.add_argument("step")
+    p.add_argument("--actor", required=True)
+    p.add_argument("--evidence", required=True)
+    p.add_argument("--fail", action="store_true", help="verification did NOT pass")
+    p = add(inc, "close", cmd_incident_close)
+    p.add_argument("id")
+    p.add_argument("--actor", required=True)
+    p.add_argument(
+        "--unverified-note", help="close without full verification (recorded as unverified)"
+    )
+
+    p = add(sub, "report", cmd_report, help="baseline or incident report (markdown)")
+    p.add_argument("--incident")
+    p.add_argument("--out")
     return parser
 
 
@@ -133,6 +328,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return int(args.func(args))
-    except (gitleaks.ScanError, ValueError, KeyError) as exc:
+    except (gitleaks.ScanError, IncidentError, SchemaError, ValueError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
