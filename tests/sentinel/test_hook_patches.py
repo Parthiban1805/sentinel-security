@@ -202,9 +202,9 @@ def test_mcp_and_session_hooks_log_and_never_block(tmp_path: Path) -> None:
 
 
 # tamper evidence --------------------------------------------------------------------------------
-def build_log(home: Path, n: int = 5) -> Path:
+def build_log(home: Path, n: int = 5, command: str = "curl https://example.invalid/{i}") -> Path:
     for i in range(n):
-        assert bash(f"curl https://example.invalid/{i}", home).returncode == 2
+        assert bash(command.format(i=i), home).returncode == 2
     return home / agentlog.LOG_NAME
 
 
@@ -258,7 +258,10 @@ def test_rewritten_history_with_valid_chain_is_caught_by_the_anchor(tmp_path: Pa
     store = Store(tmp_path / "sentinel.db")
     assert agentlog.verify_with_anchor(store, log).ok
     other = tmp_path / "other"
-    forged = build_log(other, 5)  # a different but internally valid chain
+    # A different but internally valid chain. It must differ in CONTENT: entries hold only the rule,
+    # class and time (never the command), so the same rule built in the same second would be
+    # byte-identical and rightly indistinguishable (this made CI flaky on a fast machine).
+    forged = build_log(other, 5, command="ssh host{i}.invalid")
     log.write_text(forged.read_text())
     result = agentlog.verify_with_anchor(store, log)
     assert not result.ok and any("rewritten" in p for p in result.problems)
