@@ -120,8 +120,11 @@ verifier that is not Google-specific (`incident verify-probe` re-probes the path
 doc `S1-exposed-sensitive-path.md`. Exercised live on a local server (detected, verified failing while exposed and passing after the fix, closed verified).
 **Canary decoys built** (R7 for real, ADR-0009): fake provider-shaped credential files; a COPIED decoy (found by the normal secret scan) is a
 critical incident, tampering is a high incident, a READ is a low-confidence event that never pages; decoys never become live-credential
-findings; exercised live in a scratch folder. **Not detectable with a self-built decoy:** use at a provider. **Still to build:** GitHub
-protection audit, and rule R3 (needs endpoint telemetry).
+findings; exercised live in a scratch folder. **Not detectable with a self-built decoy:** use at a provider. **GitHub protection audit
+built:** `sentinel audit` and a daily pass in `sentinel run` report default-branch protection, force pushes, required reviews, secret
+scanning and push protection; a plan limit, a missing token permission ("cannot verify") and a rejected token (401, a health failure) are
+told apart. Run live, it found that the configured token is being rejected by GitHub (expired or revoked); the product now says so clearly.
+**v0.4 is functionally complete** (391 tests). Remaining from the original list: rule R3, which needs endpoint telemetry (v0.8).
 - `sentinel hygiene`: tracked `.env`, missing `.gitignore` entries, missing pre-commit hook, dump files.
 - Workflow policy checks (S8, S9, S10): unpinned actions, `pull_request_target` on untrusted code, broad permissions;
   extend R2. Dependency checks (S7): new dependency, typosquat heuristics, install scripts, lockfile pinning
