@@ -18,7 +18,11 @@ from pathlib import Path
 from sentinel import config, doctor, runner
 from sentinel.security import load_key
 
-GITIGNORE_ENTRIES = (".sentinel/", "sentinel.toml")
+GITIGNORE_ENTRIES = (
+    ".sentinel/",
+    "sentinel.toml",
+    "sentinel.toml.bak",
+)  # .bak: `init --force` backup
 _REMOTE = re.compile(r"github\.com[:/]+([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+?)(?:\.git)?/?$")
 _TOKEN_OK = re.compile(r"^[A-Za-z0-9_\-]{20,255}$")
 

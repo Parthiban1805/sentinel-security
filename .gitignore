@@ -42,3 +42,4 @@ sentinel.toml
 
 # Repo-dump files can embed whole files, including secrets
 repomix-output.*
+sentinel.toml.bak

@@ -97,12 +97,20 @@ def test_config_without_gcp_has_no_gcp_section() -> None:
 
 
 def test_ensure_gitignore_creates_appends_and_is_idempotent(tmp_path: Path) -> None:
-    assert onboarding.ensure_gitignore(tmp_path) == [".sentinel/", "sentinel.toml"]
+    assert onboarding.ensure_gitignore(tmp_path) == [
+        ".sentinel/",
+        "sentinel.toml",
+        "sentinel.toml.bak",
+    ]
     assert onboarding.ensure_gitignore(tmp_path) == []
     other = tmp_path / "x"
     other.mkdir()
     (other / ".gitignore").write_text("node_modules/")  # no trailing newline
-    assert onboarding.ensure_gitignore(other) == [".sentinel/", "sentinel.toml"]
+    assert onboarding.ensure_gitignore(other) == [
+        ".sentinel/",
+        "sentinel.toml",
+        "sentinel.toml.bak",
+    ]
     lines = (other / ".gitignore").read_text().splitlines()
     assert lines[0] == "node_modules/" and ".sentinel/" in lines
 
