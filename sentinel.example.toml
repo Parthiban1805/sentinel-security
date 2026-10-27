@@ -1,0 +1,18 @@
+# Copy to sentinel.toml (git-ignored) and edit. No secrets in this file:
+# GitHub token comes from env SENTINEL_GITHUB_TOKEN; Google uses Application Default Credentials.
+first_run_lookback_days = 7
+
+[scan]
+paths = ["P:/development/example-repo"]
+
+[github]
+repos = ["owner/repo"]
+user_keys = true          # watch the authenticated user's SSH keys
+
+[gcp]
+projects = ["my-demo-project"]
+usage_multiple = 3.0      # usage anomaly when volume > max(multiple * 7-day mean, floor)
+usage_floor = 50
+
+[alerts]
+toast = true              # Windows notification for new real high/critical incidents

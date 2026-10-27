@@ -67,9 +67,12 @@ def make_event(
     credential_ref: str | None = None,
     identity_ref: str | None = None,
     attributes: dict[str, Any] | None = None,
+    event_id: str | None = None,
 ) -> dict[str, Any]:
+    """Build and validate an event. Pass a deterministic `event_id` from collectors so that
+    re-collecting the same source record is deduplicated by the store."""
     event: dict[str, Any] = {
-        "event_id": str(uuid.uuid4()),
+        "event_id": event_id or str(uuid.uuid4()),
         "event_type": event_type,
         "source": source,
         "asset_id": asset_id,

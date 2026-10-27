@@ -9,7 +9,7 @@ from typing import Any
 from sentinel.correlation.model import Match
 
 _SEVERITY_ORDER = ("low", "medium", "high", "critical")
-_E = {"R1": 1.0, "R7": 1.0, "R6": 0.7, "R4": 0.6}
+_E = {"R1": 1.0, "R7": 1.0, "R6": 0.7, "R4": 0.6, "R2": 0.5, "R8": 0.4}
 _P = {"admin": 1.0, "owner": 1.0, "write": 0.7, "read": 0.4}
 _C = {"low": 1 / 3, "medium": 2 / 3, "high": 1.0}
 _URGENCY = {

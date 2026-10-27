@@ -4,13 +4,22 @@ from sentinel.correlation.model import Context, Match
 from sentinel.correlation.rules import (
     Event,
     r1_exposed_then_used,
+    r2_risky_workflow_change,
     r4_spend_spike,
     r6_login_then_credential,
     r7_canary,
+    r8_workflow_change_before_release,
 )
 from sentinel.store.db import Store
 
-RULES = (r1_exposed_then_used, r4_spend_spike, r6_login_then_credential, r7_canary)
+RULES = (
+    r1_exposed_then_used,
+    r2_risky_workflow_change,
+    r4_spend_spike,
+    r6_login_then_credential,
+    r7_canary,
+    r8_workflow_change_before_release,
+)
 
 
 def correlate(events: list[Event], ctx: Context) -> list[Match]:

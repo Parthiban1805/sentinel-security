@@ -8,6 +8,7 @@ from datetime import timedelta
 class Config:
     spend_multiple: float = 3.0  # R4 threshold X [confirm]
     r6_window: timedelta = timedelta(hours=1)
+    r8_window: timedelta = timedelta(hours=24)  # [confirm]
 
 
 @dataclass(frozen=True)

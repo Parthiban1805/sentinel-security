@@ -95,6 +95,30 @@ _PLANS: dict[str, tuple[_Step, ...]] = {
         ),
         ("revoke_canary", "Disable the triggered decoy", "automatic", False),
     ),
+    "R2": (
+        ("review_workflow_diff", "Review the workflow diff and actor", "investigate_first", True),
+        ("revert_workflow", "Revert the change via reviewed PR", "approval_required", False),
+        (
+            "rotate_exposed_secrets",
+            "Rotate secrets the workflow can read",
+            "approval_required",
+            False,
+        ),
+    ),
+    "R8": (
+        (
+            "review_release_provenance",
+            "Check the release build ran from a reviewed workflow",
+            "investigate_first",
+            True,
+        ),
+        (
+            "pull_release",
+            "Unpublish or mark the release unsafe if provenance fails",
+            "approval_required",
+            False,
+        ),
+    ),
 }
 
 # Only these classes may run without an explicit human approval.

@@ -176,3 +176,85 @@ def r7_canary(events: list[Event], ctx: Context) -> list[Match]:
         for e in events
         if e["event_type"] == "canary_triggered"
     ]
+
+
+def r2_risky_workflow_change(events: list[Event], ctx: Context) -> list[Match]:
+    """Workflow change adding network calls or secret refs, by a non-maintainer."""
+    matches: list[Match] = []
+    for e in events:
+        if e["event_type"] != "workflow_changed":
+            continue
+        attrs = e.get("attributes") or {}
+        risky = [k for k in ("adds_network", "adds_secret_ref") if attrs.get(k)]
+        if not risky or attrs.get("actor_is_maintainer", True):
+            continue
+        matches.append(
+            Match(
+                rule_id="R2",
+                key=f"R2:{e['event_id']}",
+                title=f"Workflow change on {e['asset_id']} by non-maintainer: {', '.join(risky)}",
+                severity_floor="high",
+                confidence="medium",
+                facts=(
+                    f"Workflow change at {e['time']} ({', '.join(attrs.get('files', []))}).",
+                    f"Added lines contain: {', '.join(risky)}.",
+                    "Actor did not commit to this repo in the 90 days before the change.",
+                ),
+                hypotheses=(
+                    "May be a malicious change (S8/S10); may also be a new legitimate contributor.",
+                ),
+                event_ids=(e["event_id"],),
+                asset_id=e["asset_id"],
+                first_time=e["time"],
+                last_time=e["time"],
+                is_test=e["is_test"],
+                identity_ref=e.get("identity_ref"),
+            )
+        )
+    return matches
+
+
+def r8_workflow_change_before_release(events: list[Event], ctx: Context) -> list[Match]:
+    """Workflow change followed by a release on the same repo within the R8 window."""
+    changes = [e for e in events if e["event_type"] == "workflow_changed"]
+    releases = [e for e in events if e["event_type"] == "release_published"]
+    matches: list[Match] = []
+    for change in changes:
+        hits = sorted(
+            (
+                r
+                for r in releases
+                if r["asset_id"] == change["asset_id"]
+                and timedelta(0) <= _ts(r) - _ts(change) <= ctx.config.r8_window
+            ),
+            key=lambda r: (_ts(r), r["event_id"]),
+        )
+        if not hits:
+            continue
+        involved = [change, *hits]
+        matches.append(
+            Match(
+                rule_id="R8",
+                key=f"R8:{change['event_id']}",
+                title=f"Release on {change['asset_id']} shortly after a workflow change",
+                severity_floor="high",
+                confidence="low",
+                facts=(
+                    f"Workflow changed at {change['time']}.",
+                    f"{len(hits)} release(s) within "
+                    f"{int(ctx.config.r8_window.total_seconds() // 3600)}h, "
+                    f"first at {hits[0]['time']}.",
+                ),
+                hypotheses=(
+                    "The release may have been built by a modified pipeline (S10); "
+                    "it may also be a normal release.",
+                ),
+                event_ids=tuple(e["event_id"] for e in involved),
+                asset_id=change["asset_id"],
+                first_time=change["time"],
+                last_time=hits[-1]["time"],
+                is_test=_is_test(involved),
+                identity_ref=change.get("identity_ref"),
+            )
+        )
+    return matches
