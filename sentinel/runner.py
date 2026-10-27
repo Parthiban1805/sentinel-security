@@ -36,10 +36,10 @@ GITHUB_TOKEN_FILE = "github-token.txt"  # noqa: S105 (file name inside the git-i
 
 
 SHADOW_WARNING = (
-    f"the environment variable {GITHUB_TOKEN_ENV} overrides the saved token file and they differ: "
-    "an old value in the environment keeps winning. Remove the variable if the file is the right one "
-    f"(this window: set {GITHUB_TOKEN_ENV}=   permanently: reg delete HKCU\\Environment /v "
-    f"{GITHUB_TOKEN_ENV} /f)"
+    f"the environment variable {GITHUB_TOKEN_ENV} overrides the saved token file and they "
+    "differ: an old value in the environment keeps winning. Remove the variable if the file is "
+    f"the right one (this window: set {GITHUB_TOKEN_ENV}=   permanently: reg delete "
+    f"HKCU\\Environment /v {GITHUB_TOKEN_ENV} /f)"
 )
 
 
