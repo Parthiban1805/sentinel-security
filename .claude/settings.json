@@ -53,6 +53,9 @@
       "Read(~/.git-credentials)",
       "Edit(./.claude/settings.json)",
       "Edit(./.claude/hooks/**)",
+      "Read(./.sentinel/**)",
+      "Edit(./.sentinel/**)",
+      "Write(./.sentinel/**)",
       "Bash(curl:*)",
       "Bash(wget:*)",
       "Bash(ssh:*)",
@@ -91,6 +94,15 @@
             "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/bash_guard.py\""
           }
         ]
+      },
+      {
+        "matcher": "mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/mcp_log.py\""
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -100,6 +112,17 @@
           {
             "type": "command",
             "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/scan_written_file.py\""
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_log.py\""
           }
         ]
       }

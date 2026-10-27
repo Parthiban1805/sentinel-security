@@ -14,11 +14,18 @@ Everything here is tested (`tests/sentinel/test_hook_patches.py`); it is not act
   That directory holds the credential map, the GitHub token file and the log itself.
 - Logging never changes a decision: if it fails, a deny is still a deny.
 
-## Apply (about 3 minutes)
+## Apply in one step
+Double-click `apply-patch.bat` in this folder, or run `docs\patches\agent-decision-log\apply-patch.bat` from the repo root.
+It backs up your current hooks and settings to `.claude\backup-before-decision-log\`, copies the five hook files and the
+merged settings, validates the JSON (and restores the backup if invalid), and prints what to do next.
+
+## Apply by hand (about 3 minutes)
 1. Copy these files into `.claude/hooks/`, overwriting the two existing ones:
    `_decision_log.py`, `bash_guard.py`, `protect_sensitive_files.py`, `mcp_log.py`, `session_log.py`.
-2. Merge `settings-additions.json` into `.claude/settings.json` (add the two hook entries and the three deny rules; keep
-   everything already there). Remove the `_comment` key.
+2. Settings, easiest way: copy the ready-made merged file over the current one:
+   `copy /Y docs\patches\agent-decision-log\settings.merged.json .claude\settings.json`
+   It is the current settings plus exactly two hook entries and three deny rules (checked by script; nothing removed).
+   Alternatively merge `settings-additions.json` by hand (remove its `_comment` key).
 3. Restart Claude Code so the settings load.
 4. Check it: ask Claude to run a harmless blocked command (for example one that uses a network download tool); then run
    `uv run sentinel agentlog verify`. It should report entries and `chain OK`.
