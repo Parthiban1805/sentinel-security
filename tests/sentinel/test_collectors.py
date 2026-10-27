@@ -82,6 +82,15 @@ def test_client_refuses_encoded_bypasses_traversal_and_odd_ports(url: str) -> No
     assert transport.calls == []
 
 
+def test_tls_verification_is_never_disabled() -> None:
+    import ssl
+
+    from sentinel.sources.http import tls_context
+
+    ctx = tls_context()
+    assert ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname is True
+
+
 def test_redirect_responses_are_errors_not_followed() -> None:
     url = "https://api.github.com/user"
     transport = FakeTransport({}, {url: [307]})

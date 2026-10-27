@@ -7,6 +7,7 @@ dependencies = [
     "google-auth==2.36.0",
     "jsonschema==4.23.0",
     "requests==2.32.3",
+    "truststore==0.10.0",
 ]
 
 [project.scripts]

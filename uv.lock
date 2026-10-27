@@ -544,6 +544,7 @@ dependencies = [
     { name = "google-auth" },
     { name = "jsonschema" },
     { name = "requests" },
+    { name = "truststore" },
 ]
 
 [package.dev-dependencies]
@@ -559,6 +560,7 @@ requires-dist = [
     { name = "google-auth", specifier = "==2.36.0" },
     { name = "jsonschema", specifier = "==4.23.0" },
     { name = "requests", specifier = "==2.32.3" },
+    { name = "truststore", specifier = "==0.10.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -567,6 +569,15 @@ dev = [
     { name = "pytest", specifier = "==8.3.4" },
     { name = "ruff", specifier = "==0.8.4" },
     { name = "types-jsonschema", specifier = "==4.23.0.20241208" },
+]
+
+[[package]]
+name = "truststore"
+version = "0.10.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/01/a8/cdcf418e067b8ae539012a3f1a51f90b30b26f5e1952a8f60304396babbc/truststore-0.10.0.tar.gz", hash = "sha256:5da347c665714fdfbd46f738c823fe9f0d8775e41ac5fb94f325749091187896", size = 24810, upload-time = "2024-10-23T22:11:21.193Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d1/c9/bab5a5dda14af36fe31e2215f0f87bf34408951972fa7220055926dab2e0/truststore-0.10.0-py3-none-any.whl", hash = "sha256:b3798548e421ffe2ca2a6217cca49e7a17baf40b72d86a5505dc7d701e77d15b", size = 18231, upload-time = "2024-10-23T22:11:19.72Z" },
 ]
 
 [[package]]

@@ -6,6 +6,7 @@ host and path only: never query strings, headers, tokens or response bodies.
 """
 
 import json
+import ssl
 import time
 import urllib.error
 import urllib.request
@@ -59,7 +60,26 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 _MAX_BODY = 10 * 1024 * 1024
-_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def tls_context() -> ssl.SSLContext:
+    """TLS context that verifies certificates (never disabled).
+
+    Uses the operating system's verifier (truststore): on Windows it completes certificate chains
+    and trusts roots installed by a VPN/security tool, which Python's bundled OpenSSL path cannot
+    ("unable to get issuer certificate"). Falls back to the default verifying context.
+    """
+    try:
+        import truststore
+
+        return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    except ImportError:  # pragma: no cover
+        return ssl.create_default_context()
+
+
+_OPENER = urllib.request.build_opener(
+    _NoRedirect, urllib.request.HTTPSHandler(context=tls_context())
+)
 
 
 class UrllibTransport:

@@ -35,6 +35,10 @@ destination is documented in the module README and an ADR. Research: `docs/resea
   new key; a withheld diff (`patch` missing) is treated as unknown and risky (R2); ADC accepts only `authorized_user`
   credentials (service-account keys and external_account are refused); free text (evidence, notes, actor) is screened for
   credential-shaped strings; SQLite connections are closed, with a 30 s lock timeout and WAL.
+- **TLS:** certificates are always verified. Sentinel uses the OS verifier (`truststore==0.10.0`) because Python's
+  bundled path failed with "unable to get issuer certificate" on a machine behind a VPN/TLS-inspecting tool (the same
+  failure occurred with plain `urllib`). A test asserts `CERT_REQUIRED` and hostname checking stay on. Note
+  `google-auth` (via `requests`) still uses its own CA bundle and may hit the same error.
 - **Still open:** `google-auth` still performs its own HTTPS token refresh via `requests` (oauth2.googleapis.com for
   `authorized_user`), outside HttpClient's allowlist; the free-text screen is a heuristic; `alerts.log` and the token
   file have default Windows permissions (no ACL hardening); how GitHub's `since` filter treats backdated commits is
