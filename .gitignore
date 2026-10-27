@@ -39,3 +39,6 @@ Thumbs.db
 
 # Local Sentinel config (copy from sentinel.example.toml)
 sentinel.toml
+
+# Repo-dump files can embed whole files, including secrets
+repomix-output.*

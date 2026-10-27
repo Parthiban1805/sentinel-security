@@ -36,6 +36,7 @@ REAL_PRODUCERS = {
     "ssh_key_added": "github collector",
     "workflow_changed": "github collector",
     "release_published": "github collector",
+    "config_drift": "hygiene checks (sentinel hygiene)",
 }
 SIMULATION_ONLY = {
     "login_anomaly": "no login-history API for personal GitHub accounts",

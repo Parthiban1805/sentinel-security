@@ -10,7 +10,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-from sentinel import agentlog, alerts, findings
+from sentinel import agentlog, alerts, findings, hygiene
 from sentinel.config import Settings
 from sentinel.events.schema import format_time
 from sentinel.incidents import lifecycle
@@ -78,6 +78,13 @@ def run_once(
                 return len(findings.ingest(store, asset_id_for(target), found, now))
 
             guard(f"scan:{target.name}", scan_one)
+
+            def hygiene_one(target: Path = target) -> int:
+                found = hygiene.scan_repo(target, settings.hygiene_ignore)
+                asset = asset_id_for(target)
+                return add(hygiene.to_events(target, asset, found, now))
+
+            guard(f"hygiene:{target.name}", hygiene_one)
 
     if settings.github_repos or settings.github_user_keys:
         github_credential: str | None = None

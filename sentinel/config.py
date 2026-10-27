@@ -15,6 +15,7 @@ class Settings:
     usage_floor: int = 50
     first_run_lookback_days: int = 7
     toast: bool = True
+    hygiene_ignore: tuple[str, ...] = ()  # "H2:server/.env" or "W4:*" (documented exceptions)
     extra: dict[str, object] = field(default_factory=dict)
 
 
@@ -35,4 +36,5 @@ def load(path: Path) -> Settings:
         usage_floor=int(gcp.get("usage_floor", 50)),
         first_run_lookback_days=int(data.get("first_run_lookback_days", 7)),
         toast=bool(alerts.get("toast", True)),
+        hygiene_ignore=tuple(data.get("hygiene", {}).get("ignore", [])),
     )

@@ -10,7 +10,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sentinel import __version__, agentlog, config, coverage, doctor, findings, runner
+from sentinel import (
+    __version__,
+    agentlog,
+    config,
+    coverage,
+    doctor,
+    findings,
+    hygiene,
+    runner,
+)
 from sentinel.events.schema import SchemaError, format_time
 from sentinel.incidents import lifecycle
 from sentinel.incidents.lifecycle import IncidentError
@@ -307,6 +316,43 @@ def cmd_coverage(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_hygiene(args: argparse.Namespace) -> int:
+    settings = config.load(Path(args.config))
+    paths = args.paths or list(settings.scan_paths) or ["."]
+    ignore = tuple(settings.hygiene_ignore) + tuple(args.ignore or ())
+    results: dict[str, list[hygiene.Finding]] = {}
+    for raw in paths:
+        repo = Path(raw)
+        if not (repo / ".git").exists():
+            print(f"skipped (not a Git repository): {raw}", file=sys.stderr)
+            continue
+        results[inventory.asset_id_for(repo)] = hygiene.scan_repo(repo, ignore)
+    if args.record:
+        store = _store(args)
+        now = _now()
+        recorded = 0
+        for raw in paths:
+            repo = Path(raw)
+            asset_id = inventory.asset_id_for(repo)
+            if asset_id in results:
+                recorded += sum(
+                    store.add_event(e)
+                    for e in hygiene.to_events(repo, asset_id, results[asset_id], now)
+                )
+        print(f"recorded {recorded} new config_drift event(s)", file=sys.stderr)
+    print(
+        json.dumps(hygiene.results_json(results), indent=2)
+        if args.json
+        else hygiene.format_findings(results),
+        end="",
+    )
+    worst = max(
+        (hygiene.SEVERITIES.index(f.severity) for fs in results.values() for f in fs), default=-1
+    )
+    threshold = hygiene.SEVERITIES.index(args.fail_on) if args.fail_on else None
+    return 1 if threshold is not None and worst >= threshold else 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     checks = doctor.run_checks(_home(args), Path(args.config), Path.cwd())
     marks = {"ok": "OK  ", "warn": "WARN", "fail": "FAIL"}
@@ -418,6 +464,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--baseline", default="docs/coverage-baseline.json")
     p.add_argument("--check", action="store_true", help="exit 1 if a verified rule regressed")
     p.add_argument("--update-baseline", action="store_true")
+
+    p = add(sub, "hygiene", cmd_hygiene, help="repo checks: tracked secrets, .gitignore, CI policy")
+    p.add_argument("paths", nargs="*", help="repos to check (default: scan paths from the config)")
+    p.add_argument("--config", default="sentinel.toml")
+    p.add_argument("--ignore", action="append", help='accepted exception, e.g. "H2:server/.env"')
+    p.add_argument("--record", action="store_true", help="store findings as config_drift events")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--fail-on", choices=list(hygiene.SEVERITIES), help="exit 1 at this severity")
 
     p = add(
         sub, "doctor", cmd_doctor, help="read-only health checks (no network, no secrets shown)"

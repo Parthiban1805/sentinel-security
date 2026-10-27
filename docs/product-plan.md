@@ -104,7 +104,14 @@ Goal: see AI-agent behaviour. Only after v0.3a, and after a week of real log dat
 - ADR-0006: decision log (location, fields, chain, retention, rotation, privacy, why this is not the gateway yet).
 - **Exit:** R5b and R5c demonstrated end to end; a steered-agent simulation raises one incident, not a flood.
 
-### v0.4: Prevent (CI, dependencies, hygiene)  [L]
+### v0.4: Prevent (CI, dependencies, hygiene)  [L]  (status 2026-10-27: `sentinel hygiene` built and run on real repos)
+Done: `sentinel hygiene` (24 tests; 258 total). Checks use Git metadata and workflow text only, never file contents:
+H1 sensitive file tracked, H2 untracked and not ignored, H3 `.gitignore` gaps, H4 no pre-commit scan, H5 no CI scan,
+H6 repo-dump or database files; workflow checks W1 unpinned actions, W2 and W3 `pull_request_target`, W4 and W5 permissions,
+W6 script injection. Findings become `config_drift` events (idempotent), `sentinel run` includes it, `--fail-on` gates CI,
+`[hygiene] ignore` records documented exceptions. A real run on six repos found tracked `.env` files, a not-ignored `.env`
+and unignored repomix dumps. **Still to build:** dependency checks (S7), canaries, exposure probes (S1, S15), GitHub
+protection audit, the `sentinel init` wizard.
 - `sentinel hygiene`: tracked `.env`, missing `.gitignore` entries, missing pre-commit hook, dump files.
 - Workflow policy checks (S8, S9, S10): unpinned actions, `pull_request_target` on untrusted code, broad permissions;
   extend R2. Dependency checks (S7): new dependency, typosquat heuristics, install scripts, lockfile pinning
