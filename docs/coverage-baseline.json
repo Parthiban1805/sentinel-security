@@ -1,0 +1,29 @@
+{
+  "note": "Simulated-logic baseline only; says nothing about live sources.",
+  "rules": {
+    "R1": {
+      "logic_verified_simulated": true,
+      "plan_generated": true
+    },
+    "R2": {
+      "logic_verified_simulated": true,
+      "plan_generated": true
+    },
+    "R4": {
+      "logic_verified_simulated": true,
+      "plan_generated": true
+    },
+    "R6": {
+      "logic_verified_simulated": true,
+      "plan_generated": true
+    },
+    "R7": {
+      "logic_verified_simulated": true,
+      "plan_generated": true
+    },
+    "R8": {
+      "logic_verified_simulated": true,
+      "plan_generated": true
+    }
+  }
+}

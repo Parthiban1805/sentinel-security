@@ -1,221 +1,230 @@
-# Sentinel: complete product plan
+# Sentinel: product plan to an end product
 
-Covers the whole product, from what exists today to a v1.0 that can be operated. Sizes are relative
-(S = days, M = 1 to 2 weeks, L = several weeks), not commitments. Status as of 2026-10-27.
+Status as of 2026-10-27. Sizes are relative (S = days, M = 1 to 2 weeks, L = several weeks), not commitments.
+Revised after the plan review: tamper-evident agent telemetry, quieter R5, real verification evidence, honest
+coverage claims, and unfinished foundations first.
 
-## 1. Goal and scope
+## 1. The end product
 
-**Goal.** One internal system that prevents, detects, investigates and contains security incidents across
-our development and AI infrastructure, and proves containment with evidence.
+**One line:** a security operations product that every employee system can run, which finds credential, CI and
+AI-agent risks, connects the evidence into incidents, drives each one to *verified* containment, and shows the
+organisation its security state in one place.
 
-**In scope:** secrets and credentials, GitHub and CI, cloud API usage, developer machines, dependencies, AI
-agents and MCP tools.
-**Out of scope (for now):** replacing mature tools (gitleaks, provider audit logs, GitHub native features),
-network-wide monitoring, SIEM replacement, customer-facing security features.
+**Direction:** internal first, sell later. Internal means we run it across our own employee machines and
+infrastructure. Later means other organisations can install and operate it.
 
-**Success looks like (v1.0):**
-- no live exposed credentials, and every asset has an owner;
-- a leaked key is detected within minutes, correlated with usage, and an incident is opened automatically;
-- every incident closes with verification evidence;
-- every AI agent action goes through a policy decision that is logged;
-- Priority 1 scenarios S0 to S15 are continuous tests that pass.
+### Product shape (v1.0, "internal general availability")
+| Part | What it is |
+|---|---|
+| **Endpoint agent** | Small signed installer for Windows first, then macOS and Linux. Runs read-only collectors locally (secret scan, CI and dependency checks, agent activity), works offline, syncs to the service. Sends fingerprints and metadata, never raw secrets or source code. |
+| **Central service** | Receives events from many machines, correlates across them, owns incidents, approvals and the audit log. |
+| **Console** | Web UI: findings, incidents, asset and access graph, agent activity, coverage, collector health, approvals. |
+| **Response** | Reversible actions (revoke a key or token, cap quota, suspend an agent credential) behind individual approvals, each followed by automatic verification. |
+| **Assistant** | AI that summarizes an incident's evidence and unknowns. It never approves or blocks anything. |
 
-## 2. Where we are
+### Definition of done for v1.0
+- A new employee machine can be enrolled in under 10 minutes with one command or a managed push, no manual token handling.
+- A leaked key is detected, correlated with real provider usage, and an incident opens within minutes, on real data.
+- Every incident closes with verification evidence gathered by the system where a verifier exists; unverifiable closures are flagged.
+- Every in-scope agent action has a recorded decision, and tampering with that record is detectable.
+- The coverage report states, per scenario, what is verified on simulated input and what has a live source.
+- Priority 1 scenario tests pass continuously in CI.
+- Two or more operators with separate identities approve actions; the audit log records who.
+- Documentation, runbooks and an upgrade path exist; the system has had an independent security review.
 
-| Module (design spec) | What exists | Gap |
-|---|---|---|
-| A Asset and identity graph | Repo discovery, owners, credential-to-asset links, blast radius, API key assets (Google) | No machines, servers, workflows, agents, MCP servers or identities as assets |
-| B Prevention and policy | Guard hooks, pinned CI, pre-commit, S11 hook tests | No repo hygiene or workflow policy checks, no GitHub protection checks, no dependency checks |
-| C Telemetry and detection | gitleaks scan, GitHub collector (workflows, releases, SSH keys), Google collector (tested only) | No endpoint, CI-runner, server, dependency or agent telemetry; Google not run live |
-| D Correlation and investigation | Rules R1, R2, R4, R6, R7, R8; timeline; blast radius | R3, R5, R9 missing; several inputs still simulated |
-| E Incident and response | Incidents, approvals, dry-run adapter, verified closure, audit trail | No real response actions; single user |
-| F AI investigation assistant | None | Not started |
-| G Agent security gateway | Command and file guard hooks only | No policy engine, identities, decision log or sandbox |
+### Later, to sell (v1.x)
+Multi-tenant isolation (organisation id on every record), single sign-on, billing and licensing, compliance
+evidence, support tooling, a public API. Design hooks for these early (see section 5), build them after v1.0.
 
-Done: v0.1 (full incident loop on simulated signals) and v0.2 (real GitHub signals, continuous run, hardening).
-145 tests pass, CI is green, one live GitHub run was completed.
+## 2. Principles
+1. **Rules decide, AI explains.** Deterministic, explainable detection; AI never authorizes actions.
+2. **Facts are separated from hypotheses**; unknowns are listed. Timing alone never proves a shared attacker.
+3. **No raw secrets stored**; fingerprints only. Collectors are read-only and use documented hosts (ADRs).
+4. **Closure needs evidence.** Evidence comes from a verifier or a recorded human attestation, labelled as such.
+5. **Claims are honest.** "Verified on simulated input" and "live source present" are different columns.
+6. **Prove before building on it.** A source or rule is not a foundation until it has run on real data.
 
-## 3. Release plan
+## 3. Where we are
 
-Each release has a goal, a deliverable set and **exit criteria** that must be demonstrated, not asserted.
+| Area | Built | Proven on real data | Gap |
+|---|---|---|---|
+| Secret scan, registry, fingerprints | yes | yes (local repos) | Locations outside Git (S2 gap) |
+| Inventory and blast radius | yes | partly | Only repository and API key assets exist; no approve or owner command |
+| GitHub collector, R2, R8 | yes | R2 live; first alert was a false positive, fixed | R8 not seen live |
+| Google Cloud collector, R1 on real data | yes | **no** | Never run live; origin incident chain unproven end to end |
+| Rules R4, R6, R7 | yes | no (simulated) | Real sources missing |
+| Incidents, approvals, verified closure | yes | simulated incidents; one real R2 | Evidence mostly typed by a human; one automated verifier (Google) |
+| Continuous run, alerts, doctor | yes | run live, alerts tested | Scheduler not enabled; no soak test |
+| Agent security | guard hooks, S11 tests | n/a | Decisions not recorded; no agent or MCP inventory; no R5 |
+| Service, console, installer, response actions, assistant | no | | Entire product shell |
 
-### v0.3: Trust the signals (finish what exists)  [M]
-**Goal:** every shipped collector and rule has run on real data and is trustworthy.
-- Run the Google Cloud collector live (needs `gcloud` installed and a read-only login); re-review it for security.
-  Confirm the `credential_id` format and map real keys with `inventory alias`.
-- Populate the registry with real state: record the already-revoked keys with their fingerprints, owners for all assets.
-- Schedule `sentinel run` (user runs the script); add `sentinel doctor` (checks token, ADC, gitleaks, permissions).
-- Harden Sentinel itself: restrict file permissions on `.sentinel` (Windows ACLs), encrypt the credential-map store or
-  document why not, backup/restore of state.
-- Close S2 gap (JSON-escaped keys in agent transcripts) with an unescape-before-scan step; real-location S2 scans.
-- Fix schema `$id` bug with an ADR (version bump).
-- **Exit:** 7 days of scheduled runs with no collector errors; one real R1 path demonstrated on a throwaway key in a
-  throwaway Google project (leak, usage spike, incident, revoke, `verify-key` passes); S2 gap test turns green.
+## 4. Release plan (each release has exit criteria that must be demonstrated)
 
-### v0.4: Prevent (Phase B)  [L]
-**Goal:** stop recurrence with checks that run before and after commits.
-- **Repo hygiene scanner:** `.env` tracked or not ignored, missing `.gitignore` entries, missing pre-commit hook,
-  large dump files (checks that were done by hand become a command: `sentinel hygiene`).
-- **Workflow policy checks** (S8, S9, S10): actions not pinned to commit SHAs, `pull_request_target` with checkout of
-  untrusted code, broad `permissions`, secrets exposed to fork PRs. Extend R2 with these signals.
-- **Dependency checks** (S7): new dependency detection, typosquat heuristics, install-script flags, lockfile pinning;
-  prepares R3.
-- **GitHub protection audit:** branch protection, secret scanning and push protection status per repo (reports the
-  gap on the free plan honestly).
-- **Canaries** (R7 for real): a generator for decoy credentials and files with a registry; alerts when a decoy is used
-  (needs a decoy source that can actually notice use, such as a canary token service decision).
-- **Exposure probes** (S1, S15): read-only checks of our own hosts for reachable `.env`, `.git` and backup paths.
-- **Policy-as-code:** rules for checks live in versioned files with tests.
-- **Exit:** all in-scope repos pass `hygiene` or have accepted exceptions; Priority 1 scenario tests S0, S1, S2, S7,
-  S11 pass continuously in CI; first recovery drill completed and recorded.
+### v0.3a: Foundations and proof  [M]  (status 2026-10-27: code complete; Google live, soak run and patch application pending)
+Done and tested (234 tests): schema `$id` fix (ADR-0006); S2 JSON-escape fix; "Gate A" wording removed; `inventory set`
+(owner, approval, importance, monitoring; audited; secret-screened); `sentinel coverage` with a CI regression check and
+committed baseline; tamper-evident decision log with chain plus anchor, `agentlog verify`, `doctor` check and run-time check
+(ADR-0007); hook patch files in `docs/patches/agent-decision-log/` (not applied: protected files); hook facts verified
+(`docs/research/agent-hooks.md`). **Still open:** you apply the hook patch; Google live and the 7-day soak (need `gcloud`
+and the scheduler script); log rotation that preserves the chain and anchor.
+Goal: what exists is correct, honest and proven before more is built on it.
+- Fix the schema `$id` bug (ADR + version bump). Fix S2 (unescape JSON before scanning). Remove "Gate A" wording from reports.
+- `sentinel coverage`: runs each scenario chain through the real pipeline in a temporary state dir; matrix columns are
+  **logic verified on simulated input**, **live source present** (from collector health), **rule exists**, **plan
+  generated**, **closure verifiable**; lists telemetry gaps (event types with no producer, asset types never seen);
+  exits non-zero on regression; added to CI with a committed baseline.
+- `inventory approve` and `inventory own` (set owner, approval, importance) so assets can leave the "unowned" state.
+- Agent decision log, **tamper-evident**: hooks append one JSON line per *denial* and per MCP call (not every allowed
+  call), holding time, session id, tool, rule id, target class and a keyed fingerprint (no raw command or path); each line
+  carries a hash chained to the previous one; a session-start heartbeat; `doctor` checks that hooks are wired and the
+  log chain is intact. Hooks and `settings.json` are protected files: **you apply these patches**; they also block agent
+  writes to `.sentinel/`.
+- Verify the hook facts in the official docs first: `session_id` in hook input, and the `mcp__.*` matcher.
+- Google Cloud live (needs `gcloud` and a read-only login) and a scheduled 7-day soak run, if Google stays in scope.
+- **Exit:** coverage matrix generated in CI; log tamper test fails the chain check when a line is edited or removed;
+  7 days of scheduled runs with no collector errors; if Google is in scope, one real R1 path on a throwaway key.
 
-### v0.5: Investigate with AI (Module F)  [M]
-**Goal:** faster understanding without giving AI authority.
-- **Evidence pack:** a redacted, minimal bundle per incident (facts, timeline, impact, unknowns).
-- **Assistant:** Claude summarizes the pack, lists likely impact, flags unknowns, proposes investigation steps and
-  drafts the incident report. It never changes state or approves anything.
-- **Guardrails:** secrets and PII removed before any model call; untrusted text (commit messages, issue text, tool
-  output) wrapped as data; prompt-injection tests; outputs labelled "AI-generated, unverified".
-- ADR for the outbound API destination and data minimization; cost and rate limits.
-- **Exit:** an evaluation set of at least 20 incidents scored by a human for accuracy; zero secret leakage and zero
-  successful injection in the test suite; assistant removed from every approval path (verified by test).
+### v0.3b: Agent visibility  [M]
+Goal: see AI-agent behaviour. Only after v0.3a, and after a week of real log data shows the false-positive rate.
+- `sentinel/sources/agent.py`: reads the log by offset (handles rotation and truncation), validates the chain,
+  emits `agent_tool_denied` and `agent_tool_allowed` events, uses the deferred-state commit pattern, isolated like other sources.
+- `inventory agents`: an `ai_agent` asset per workspace and `mcp_server` assets from project `.mcp.json` and project
+  settings (server name, transport, host only; env and header values dropped before storage). **Limit stated in the
+  docs:** servers configured at user scope are not visible, because that config holds credentials and is off limits.
+- **R5** (spec first): **R5b** is the main alert (3 or more denials in one session within 30 minutes, configurable
+  `[confirm]`, hypothesis: possible injection); **R5c** fires on an allowed call to an MCP server not approved in the
+  inventory, only for servers that went through `inventory approve`; **R5a** (a single denied sensitive action) is
+  recorded as context and counts toward R5b but does not open an incident, because the keyword guard produces harmless
+  denials (it blocked this very session's commands that merely contained words like "curl" and "SSH").
+- R5 response plan: review the session's untrusted inputs; suspend the agent session or credential (approval, dry run);
+  approve or remove the MCP server (approval). **Verification evidence:** hook and settings files unchanged (hash), log
+  chain intact, and the credential actually revoked or session ended: not "no more denials".
+- Scenario docs and tests: extend S11 (decision logged, no raw command or path in the log, a hook still denies when
+  logging fails); add S12 (unapproved MCP server used). Fake values generated at runtime.
+- ADR-0006: decision log (location, fields, chain, retention, rotation, privacy, why this is not the gateway yet).
+- **Exit:** R5b and R5c demonstrated end to end; a steered-agent simulation raises one incident, not a flood.
 
-### v0.6: Agent security gateway (Module G, Phase D)  [L]
-**Goal:** every agent tool call passes a policy decision.
-- **Policy engine:** per-agent identity, allowed tools, paths, network destinations, secrets scopes; default deny for
-  sensitive actions; versioned policy files with tests.
-- **Gateway:** a local proxy for tool calls (starting with MCP servers and Claude Code hooks), decision log (allow,
-  deny, approved) with identity, action, target and reason; secrets redacted.
-- **Rules:** R5 (tool outside allowlist or unusual secret use), R9 (sensitive access with no gateway decision = bypass).
-- **Sandboxing:** run risky tools in a container or VM with filesystem isolation, limits and an egress allowlist;
-  closes the known hook bypass (inline interpreter calls).
-- **MCP allowlist:** owner, permissions, pinned version and review for every server (S12).
-- **Kill switch:** suspend all agent credentials in one command; test it.
-- **Injection test suite (S11) in CI:** attempts to make an agent leak data, push, or read secrets.
-- **Exit:** 100 percent of agent actions in scope recorded with a decision; injection suite passes; the two known
-  bypass tests turn green.
+### v0.4: Prevent (CI, dependencies, hygiene)  [L]
+- `sentinel hygiene`: tracked `.env`, missing `.gitignore` entries, missing pre-commit hook, dump files.
+- Workflow policy checks (S8, S9, S10): unpinned actions, `pull_request_target` on untrusted code, broad permissions;
+  extend R2. Dependency checks (S7): new dependency, typosquat heuristics, install scripts, lockfile pinning
+  (`dependency_added` events, prepares R3). GitHub protection audit per repo.
+- Canaries (R7, real): self-built decoys first (a permissionless key in a dedicated project, a decoy URL on a server
+  we control); a hosted canary service can be added later for faster alerts.
+- Exposure probes (S1, S15): read-only checks of our own hosts for reachable `.env`, `.git` and backups.
+- **Exit:** hygiene clean or excepted on in-scope repos; Priority 1 scenarios S0, S1, S2, S7, S11 pass in CI; first recovery drill.
 
-### v0.7: Endpoint and runtime telemetry  [L]
-**Goal:** see what happens on developer machines and runners.
-- **Developer machine collector** (read-only, opt-in): installed editor extensions (S5), new credential file reads,
-  shell history and agent transcript scans (S2), unusual outbound connections.
-- **CI runner telemetry:** workflow runs, egress, secret use (S8, S9).
-- **Server basics** for the exposed services we run.
-- **Rule R3:** new dependency, then the same machine or runner touches credential files or makes unexpected egress.
-- **Privacy review:** what is collected, retention, who can see it; opt-in and transparent.
-- **Exit:** R3 demonstrated end to end (S7 scenario test); collector overhead and privacy review signed off.
+### v0.5: Evidence and verification automation  [M]
+- Credential exposure beyond Git: logs, build artifacts, agent transcripts, shell history (opt-in paths).
+- Verifiers per step type: re-scan clean, provider status (Google today; GitHub tokens and keys next), post-closure
+  watch window that reopens an incident on renewed use of a "revoked" credential.
+- Automatic blast-radius edges from provider metadata (what a key or token can actually reach).
+- **Exit:** at least three step types verified by the system with no human-typed evidence.
 
-### v0.8: Service and team use  [L]
-**Goal:** every employee system can run Sentinel with almost no setup, and one central service shows the whole
-organisation. **Direction decided; design deferred** (see section 8).
-- **Plug-and-play endpoint agent:** a small, signed installer that runs the local collectors (secret scan, extension and
-  dependency checks, agent policy) read-only and reports to the central service. One command or a managed push
-  (for example through the company's device management), no manual token handling; per-device enrolment and revocation.
-- Local-first: the agent works offline and keeps its own state, then syncs; it sends fingerprints and metadata, never
-  raw secrets or source code.
-- Central service (FastAPI) and datastore (PostgreSQL) per the org scaffold standard; keep the CLI as a client.
-- Authentication, roles, per-user approvals, immutable audit log.
-- Read-only dashboard (Next.js): incidents, findings, graph, collector health.
-- Secrets management for collector credentials; short-lived tokens; rotation runbook.
-- Deployment, backup and restore, monitoring of Sentinel itself.
-- **Exit:** two users and two machines operating on shared state; approvals attributed to individuals; restore drill passed.
+### v0.6: AI investigation assistant  [M]
+- Redacted evidence pack per incident; Claude summarizes impact, lists unknowns and proposes investigation steps; drafts
+  the report. Never changes state. Secrets and personal data removed before any model call; untrusted text treated as data;
+  prompt-injection tests; outputs labelled AI-generated.
+- ADR for the outbound API destination and data rules; cost limits.
+- **Exit:** 20 incidents scored by a human for accuracy; zero leakage and zero successful injection in tests; test proves the assistant is on no approval path.
+
+### v0.7: Agent gateway  [L]
+- Policy engine and local gateway for tool calls with per-agent identity and a decision record; default deny for
+  sensitive actions; sandboxed risky tools (container or VM, egress allowlist); R9 (sensitive access with no decision);
+  MCP allowlist with owner, pinned version and review; kill switch; injection suite in CI.
+- **Exit:** every in-scope agent action has a decision; the two recorded hook-bypass tests turn green; kill-switch drill passes.
+
+### v0.8: Endpoint agent and central service  [L]
+Detailed design happens here; direction is decided (plug-and-play on every employee system).
+- Installer and enrolment (see section 5), local-first agent that syncs, central service and datastore, authentication
+  and roles, per-user approvals, immutable audit log, read-only console first, then approvals in the console.
+- Telemetry from developer machines (editor extensions S5, credential-file access, shell history and transcript scans)
+  and CI runners; rule R3.
+- **Exit:** two operators and two machines on shared state; approvals attributed to individuals; restore drill passed;
+  enrolment under 10 minutes.
 
 ### v0.9: Real response  [M]
-**Goal:** safe, reversible actions behind approvals.
-- Adapters for specific actions: revoke a GitHub token or SSH key, delete a Google API key, set a quota cap,
-  suspend an agent credential, isolate a runner.
-- Each action has: approval, dry run, rollback plan, audit entry and automatic verification afterwards.
-- Pre-approved emergency policies only where a human has explicitly agreed (for example "key confirmed in a public repo").
-- **Exit:** each adapter proven in a sandbox account; failed action leaves the incident open; kill-switch drill passed.
+- Adapters for specific actions with approval, dry run, rollback plan, audit entry and automatic verification: revoke a
+  GitHub token or key, delete a Google API key, cap quota, suspend an agent credential, isolate a runner.
+- Emergency pre-approved policies only where a human explicitly agreed.
+- **Exit:** each adapter proven in a sandbox account; failed action leaves the incident open; drills pass.
 
-### v1.0: Operate  [M]
-- Service level objectives and metrics dashboards (section 6), quarterly recovery drills per incident type.
-- Runbooks for every rule; on-call and escalation paths; severity targets confirmed.
-- Documentation, onboarding guide, security review of the whole system, penetration test of Sentinel itself.
-- **Exit:** all phase gates met, or each exception owned and dated.
+### v1.0: Internal general availability  [M]
+Everything in the definition of done (section 1): service levels, metrics, runbooks per rule, on-call and escalation,
+documentation and onboarding, independent security review and penetration test of Sentinel itself.
 
-## 4. Scenario coverage (S0 to S15)
+### v1.x: To sell
+Multi-tenant isolation, single sign-on, billing and licensing, compliance evidence, public API, support tooling.
 
-| ID | Scenario | Planned in | Notes |
-|---|---|---|---|
-| S0 | Secret in Git history abused | v0.3 (real) | Simulated now; real Google path in v0.3 |
-| S1 | `.env` or `.git` served publicly | v0.4 | Read-only probes of our hosts |
-| S2 | Secrets outside Git | v0.3 and v0.7 | Fix JSON gap; real locations; endpoint scans |
-| S3 | Key in a public gist or forum | v0.4 | Needs GitHub secret scanning alerts (plan limits unverified) |
-| S4 | Stolen session bypasses 2FA | later | Needs org audit log; unavailable on personal accounts |
-| S5 | Malicious editor extension | v0.7 | Endpoint collector |
-| S6 | Stolen GitHub token | v0.4 and v0.9 | Limited by available audit data; token inventory |
-| S7 | Typosquatted package | v0.4 and v0.7 | Dependency checks, then R3 |
-| S8 | Compromised third-party Action | v0.4 | Pin checks plus R2 |
-| S9 | Fork PR exposes secrets | v0.4 | Workflow policy check |
-| S10 | Workflow modified to ship poisoned release | done (R8) | Live validation in v0.3 |
-| S11 | Prompt injection leaks data | v0.6 | Injection suite in CI |
-| S12 | Malicious or overprivileged MCP server | v0.6 | MCP allowlist |
-| S13 | Agent pushes or merges without review | v0.6 | Agent identities and protected branches |
-| S14 | Stale SSH key or former member | v0.4 | GitHub returns `last_used` per key |
-| S15 | Exposed database backup | v0.4 | Exposure probes and inventory |
+## 5. Productization track (runs alongside the releases)
 
-## 5. Correlation rules
-
-| Rule | Status | Planned |
+| Workstream | What | When |
 |---|---|---|
-| R1 exposed key then used | built; usage simulated | real data v0.3 |
-| R2 risky workflow change | live | extended in v0.4 |
-| R3 new dependency then credential access or egress | not built | v0.7 |
-| R4 spend spike | built (request volume proxy) | real billing data later |
-| R5 agent tool outside allowlist | not built | v0.6 |
-| R6 login then new token or key | partly (keys only) | needs org-level audit data |
-| R7 canary used | built (simulated) | real canaries v0.4 |
-| R8 workflow change then release | built | live check v0.3 |
-| R9 sensitive access with no gateway decision | not built | v0.6 |
+| Installability | `uv`/pip package, then a signed Windows installer, then macOS and Linux; versioned releases with checksums; auto-update with rollback | v0.5 start, finish v0.8 |
+| First-run experience | `sentinel init` wizard (state dir, scan paths, token guidance, doctor) replacing hand-edited TOML | v0.4 |
+| Enrolment and identity | Per-device enrolment token and revocation; operator identities; every record carries an organisation id from v0.8 so multi-tenant is possible later | design v0.7, build v0.8 |
+| Privacy and consent | What is collected per machine, retention, who sees it, opt-in paths, employee notice; log only denials and sampled counts, not every allowed action | policy before v0.3b, enforce v0.8 |
+| Security of Sentinel itself | Threat model, state encryption and file permissions, signed releases, dependency and action pinning, review before every release (the v0.2 review found two blockers) | every release |
+| Observability | Agent health, collector health, sync status, self-diagnosis (`doctor` grows into fleet health) | v0.3a onward |
+| Documentation | Operator guide, onboarding, runbook per rule, ADR per decision, API docs | v0.9 to v1.0 |
+| Support and operations | Upgrade runbook, backup and restore, incident process for Sentinel itself, severity targets | v1.0 |
 
-## 6. Metrics and targets (from the roadmap)
+## 6. Scenario and rule coverage
 
-Live exposed secrets 0; credentials with owner, scope, quota and expiry 100 percent; repos with push and branch
-protection 100 percent (limited by plan); unowned assets 0; time to detect a leaked secret under 15 minutes (scanner
-and GitHub signals; Google signals are about 30 minutes late by design); time to contain a critical incident under
-1 hour; scenario detection rate 100 percent for Priority 1; agent actions via policy 100 percent; false positive rate
-under 20 percent (tracked per rule, as with the R2 false positive found in v0.2); recovery drills at least one per
-incident type per quarter.
+| Scenario | Release | Notes |
+|---|---|---|
+| S0 key in history abused | v0.3a (real) | Needs a live Google path to count as real |
+| S1 public `.env` or `.git` | v0.4 | Probes of our hosts |
+| S2 secrets outside Git | v0.3a, v0.5, v0.8 | JSON gap now; locations later; endpoint scans |
+| S3 key in a public gist | v0.4 | Depends on GitHub alert availability (unverified) |
+| S4 stolen session | later | Needs org-level audit data |
+| S5 malicious editor extension | v0.8 | Endpoint agent |
+| S6 stolen GitHub token | v0.4, v0.9 | Limited by available audit data |
+| S7 typosquatted package | v0.4, v0.8 | Dependency checks, then R3 |
+| S8 compromised Action, S9 fork PR, S10 poisoned release | v0.4 (S10 R8 built) | Workflow policy checks |
+| S11 injection makes agent leak data | v0.3b, v0.7 | Log and R5 first, gateway later |
+| S12 malicious MCP server | v0.3b, v0.7 | R5c, then allowlist |
+| S13 agent pushes without review | v0.7 | Agent identities |
+| S14 stale SSH key | v0.4 | GitHub returns last-used per key |
+| S15 exposed backup | v0.4 | Exposure probes |
 
-## 7. Cross-cutting work (runs through every release)
+Rules: R1, R2, R4, R6, R7, R8 built (R1 on real data pending); R5 in v0.3b; R3 in v0.8; R9 in v0.7.
 
-- **Security of Sentinel itself:** it holds a map of our secrets. Threat model it, protect state with ACLs and
-  encryption, minimize and expire stored data, review each release (the v0.2 review found two real blockers).
-- **Testing:** scenario tests first, deterministic rules, runtime-generated fake credentials, no network in tests,
-  a regression test for every false positive and bug.
-- **Supply chain:** pinned dependencies and actions, checksummed downloads, one ADR per new dependency or network
-  destination.
-- **Governance:** one ADR per architectural decision; all generated code and recommendations reviewed by a human
-  before production use; approvals recorded.
-- **Documentation:** keep the spec, rule specs, runbooks and README in step with the code.
+## 7. Metrics (from the roadmap)
+Live exposed secrets 0; credentials with owner, scope, quota and expiry 100 percent; unowned assets 0; time to detect a
+leaked secret under 15 minutes for scanner and GitHub signals (Google signals are about 30 minutes late by design);
+time to contain a critical incident under 1 hour; Priority 1 scenario detection 100 percent; agent actions with a
+recorded decision 100 percent; false positives under 20 percent per rule; recovery drills at least one per incident type per quarter.
 
 ## 8. Decisions needed
-
 | Decision | Needed by | Options |
 |---|---|---|
-| Team service shape | before v0.8 (decided in direction, details later) | **Decision: build a plug-and-play agent that can be installed on every employee system, reporting to a central service.** Design it later (see v0.8); stay a local tool until then |
-| GitHub plan (branch protection and push protection need a paid plan on private repos) | v0.4 | Upgrade, move the repo, or accept the gap |
-| Google Cloud usage in scope | v0.3 | Install `gcloud`, or drop provider usage |
-| Canary approach | v0.4 | Hosted canary tokens or self-built decoys |
-| AI provider and data rules for Module F | v0.5 | Which data may leave the machine |
-| Severity targets and thresholds marked `[confirm]` | v0.3 | R4 multiple, R8 window, response times |
+| Split v0.3 as above, or keep one milestone | now | Recommended: split |
+| Apply hook and settings patches by hand (they are protected files) | v0.3a | You apply them; I prepare the patches |
+| Google Cloud in scope before v0.3b | v0.3a | Install `gcloud` and run the soak, or drop provider usage for now |
+| Canary approach | v0.4 | Self-built first (recommended) or hosted |
+| Employee monitoring policy (what is logged, retention, notice) | before v0.3b | Needs a decision and sign-off |
+| AI provider and data rules for the assistant | v0.6 | Which data may leave the machine |
+| GitHub plan for branch and push protection | v0.4 | Upgrade, move the repo, or accept the gap |
+| Windows-first, then macOS and Linux | v0.5 | Confirm the order and which OS employees use |
+| Severity targets and `[confirm]` thresholds | v0.3a | R4 multiple, R5b count and window, R8 window |
 
 ## 9. Risks
-
 | Risk | Impact | Mitigation |
 |---|---|---|
-| Provider data is late or thin (Google about 30 minutes, no caller IP) | Slower or weaker detection | State limits honestly; use volume and dead-key signals; add billing export later |
-| False positives erode trust | Alerts get ignored | Per-rule tracking, regression tests, owner and history awareness |
-| Sentinel's own store is a high-value target | Secret map exposed | ACLs, encryption, minimal retention, review |
-| Scope creep across seven modules | Nothing finished | Ship per release with exit criteria; defer what lacks a data source |
-| Single owner, single machine | Bus factor and blind spots | v0.8 service, documented runbooks |
-| Tokens and credentials needed for collectors | Becomes an attack path | Read-only scopes, short-lived tokens, allowlisted hosts, kill switch |
+| Building on unproven foundations (Google, R1 real data) | Features that fail in production | v0.3a proves them first |
+| Agent can tamper with its own log | Blind spot exactly when needed | Hash chain, heartbeat, blocked writes, doctor check |
+| Keyword guard noise | Alert fatigue | R5a as context only, R5b main alert, per-rule false-positive tracking |
+| Coverage claims overstate | Loss of trust, mis-selling | Separate simulated and live columns; wording rules |
+| Employee monitoring concerns | Legal and morale problems | Consent, minimal logging, retention limits, transparency |
+| Sentinel store is a high-value target | Secret map exposed | Encryption, permissions, minimal retention, review |
+| Scope across many parts | Nothing shipped | Release exit criteria; defer what lacks a data source |
+| Provider data is late or thin | Weaker detection | State limits; volume and dead-key signals; billing export later |
 
 ## 10. Next steps
-
-1. Settle the open decisions above that affect v0.3.
-2. Run v0.3: Google live (if in scope), scheduling, `doctor`, S2 fix, schema fix.
-3. Start v0.4 with the hygiene scanner, which is the cheapest win for prevention.
+1. Confirm the decisions in section 8 that block v0.3a (split, hook patches, Google, monitoring policy).
+2. Verify the hook documentation facts (`session_id`, `mcp__.*` matcher).
+3. Build v0.3a in this order: schema and S2 fixes, `inventory approve`/`own`, `coverage`, then the tamper-evident log
+   with the hook patches for you to apply, then Google live and the soak run if in scope.
 
 All generated code, infrastructure and recommendations require human review before production use.

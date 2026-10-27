@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from sentinel.events.schema import format_time
+from sentinel.redaction import check_free_text
 from sentinel.store.db import Store
 
 _SKIP_DIRS = {"node_modules", ".venv", "venv", "target", "dist", "build", "__pycache__"}
@@ -54,6 +55,51 @@ def import_assets(store: Store, path: Path) -> int:
     for record in records:
         store.upsert_asset(record)  # validates against the asset schema
     return len(records)
+
+
+_IMPORTANCE = ("low", "medium", "high", "critical")
+_MONITORING = ("none", "partial", "full")
+
+
+def update_asset(
+    store: Store,
+    asset_id: str,
+    *,
+    actor: str,
+    now: datetime,
+    owner: str | None = None,
+    approved: bool | None = None,
+    importance: str | None = None,
+    monitoring: str | None = None,
+) -> dict[str, Any]:
+    """Set an asset's owner/approval/importance/monitoring (validated, audited, human-driven)."""
+    if importance is not None and importance not in _IMPORTANCE:
+        raise ValueError(f"importance must be one of {_IMPORTANCE}")
+    if monitoring is not None and monitoring not in _MONITORING:
+        raise ValueError(f"monitoring must be one of {_MONITORING}")
+    actor = check_free_text("actor", actor) or ""
+    owner = check_free_text("owner", owner)
+    asset = next((a for a in store.assets() if a["asset_id"] == asset_id), None)
+    if asset is None:
+        raise KeyError(f"unknown asset: {asset_id}")
+    changes: dict[str, Any] = {}
+    for field, value in (
+        ("owner", owner),
+        ("approved", approved),
+        ("importance", importance),
+        ("monitoring", monitoring),
+    ):
+        if value is not None and asset.get(field) != value:
+            changes[field] = {"from": asset.get(field), "to": value}
+            asset[field] = value
+    if changes:
+        asset["last_seen"] = format_time(now)
+        store.upsert_asset(asset)  # validates against the asset schema
+        store.add_audit(
+            format_time(now),
+            {"action": "asset_update", "asset_id": asset_id, "actor": actor, "changes": changes},
+        )
+    return asset
 
 
 def gaps(store: Store) -> dict[str, list[str]]:

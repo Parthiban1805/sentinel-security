@@ -198,7 +198,7 @@ def test_full_incident_loop(env: Env) -> None:
     report = env.home / "report.md"
     assert env.run("report", "--out", str(report)) == 0
     assert env.run("report", "--incident", iid) == 0
-    assert "Gate A" in report.read_text() and "CONFIRMED access" in env.last
+    assert "Exposure status" in report.read_text() and "CONFIRMED access" in env.last
 
     # no raw credential anywhere: output, state files, report
     assert env.key not in env.transcript

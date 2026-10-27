@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from sentinel import config, runner
+from sentinel import agentlog, config, runner
 from sentinel.scanners import gitleaks
 from sentinel.security import load_key
 from sentinel.store.db import Store
@@ -112,6 +112,26 @@ def check_github_token(home: Path, settings: config.Settings) -> Check:
     return Check("github token", "ok", f"found in {source} ({shape}, {len(token)} chars)")
 
 
+def check_agent_log(home: Path) -> Check:
+    path = home / agentlog.LOG_NAME
+    if not path.exists():
+        return Check(
+            "agent log",
+            "warn",
+            "no decision log yet (patch docs/patches/agent-decision-log not applied, "
+            "or nothing denied yet)",
+        )
+    anchor = None
+    db = home / "sentinel.db"
+    if db.exists():
+        anchor = Store(db).get_doc("snapshots", "agentlog:anchor")
+    result = agentlog.verify(path, anchor)
+    if not result.ok:
+        return Check("agent log", "fail", "chain broken: " + "; ".join(result.problems[:2]))
+    note = "" if anchor else " (no anchor yet: run `sentinel agentlog verify`)"
+    return Check("agent log", "ok", f"{result.entries} entries, chain intact{note}")
+
+
 def check_gcp(settings: config.Settings) -> Check:
     if not settings.gcp_projects:
         return Check("google cloud", "ok", "not configured")
@@ -130,5 +150,6 @@ def run_checks(home: Path, config_path: Path, root: Path) -> list[Check]:
         lambda: check_config(config_path),
         lambda: check_github_token(home, settings),
         lambda: check_gcp(settings),
+        lambda: check_agent_log(home),
     ]
     return [check() for check in checks]

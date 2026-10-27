@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sentinel import __version__, config, doctor, findings, runner
+from sentinel import __version__, agentlog, config, coverage, doctor, findings, runner
 from sentinel.events.schema import SchemaError, format_time
 from sentinel.incidents import lifecycle
 from sentinel.incidents.lifecycle import IncidentError
@@ -232,6 +232,24 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_inventory_set(args: argparse.Namespace) -> int:
+    asset = inventory.update_asset(
+        _store(args),
+        args.asset,
+        actor=args.actor,
+        now=_now(),
+        owner=args.owner,
+        approved=True if args.approve else (False if args.unapprove else None),
+        importance=args.importance,
+        monitoring=args.monitoring,
+    )
+    print(
+        f"{asset['asset_id']}: owner={asset.get('owner')} approved={asset.get('approved')} "
+        f"importance={asset['importance']} monitoring={asset['monitoring']}"
+    )
+    return 0
+
+
 def cmd_inventory_alias(args: argparse.Namespace) -> int:
     store = _store(args)
     uid = normalize_credential_id(args.credential_id)
@@ -246,6 +264,46 @@ def cmd_inventory_alias(args: argparse.Namespace) -> int:
     store.put_doc("aliases", alias_key(args.project, uid), doc)
     store.add_audit(doc["time"], {"action": "alias", **doc})
     print(f"aliased gcp {args.project} key {uid} -> {args.cred_ref} (confirmed by {args.actor})")
+    return 0
+
+
+def cmd_agentlog_verify(args: argparse.Namespace) -> int:
+    path = Path(args.file) if args.file else _home(args) / agentlog.LOG_NAME
+    result = agentlog.verify_with_anchor(_store(args), path)
+    if result.ok:
+        denies = sum(r["decision"] == "deny" for r in result.records)
+        print(f"chain OK: {result.entries} entries ({denies} denials), last seq {result.last_seq}")
+        return 0
+    for problem in result.problems:
+        print(f"TAMPER/ERROR: {problem}", file=sys.stderr)
+    return 1
+
+
+def cmd_coverage(args: argparse.Namespace) -> int:
+    home = _home(args)
+    health = asset_types = None
+    db = home / "sentinel.db"
+    if db.exists():
+        store = Store(db)
+        last = store.get_doc("snapshots", "health:last_run")
+        health = last["health"] if last else None
+        asset_types = {a["asset_type"] for a in store.assets()}
+    report = coverage.build_report(health, asset_types or set())
+    print(coverage.report_json(report) if args.json else coverage.format_report(report), end="")
+    baseline_path = Path(args.baseline)
+    if args.update_baseline:
+        baseline_path.write_text(
+            json.dumps(coverage.baseline_from(report), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        print(f"baseline written to {baseline_path}")
+    if args.check:
+        if not baseline_path.exists():
+            raise ValueError(f"baseline file not found: {baseline_path}")
+        bad = coverage.regressions(report, json.loads(baseline_path.read_text(encoding="utf-8")))
+        for line in bad:
+            print(f"REGRESSION {line}", file=sys.stderr)
+        return 1 if bad else 0
     return 0
 
 
@@ -334,11 +392,32 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("asset")
     p.add_argument("--permission", required=True)
     p.add_argument("--actor", required=True)
+    p = add(inv, "set", cmd_inventory_set, help="set owner, approval, importance or monitoring")
+    p.add_argument("asset")
+    p.add_argument("--actor", required=True)
+    p.add_argument("--owner")
+    group = p.add_mutually_exclusive_group()
+    group.add_argument("--approve", action="store_true")
+    group.add_argument("--unapprove", action="store_true")
+    p.add_argument("--importance", choices=["low", "medium", "high", "critical"])
+    p.add_argument("--monitoring", choices=["none", "partial", "full"])
     p = add(inv, "alias", cmd_inventory_alias, help="map a provider key id to a credential ref")
     p.add_argument("cred_ref")
     p.add_argument("--project", required=True, help="GCP project id")
     p.add_argument("--credential-id", required=True, help="key uid or 'apikey:<uid>'")
     p.add_argument("--actor", required=True)
+
+    ag = sub.add_parser("agentlog", help="agent decision log").add_subparsers(
+        dest="sub", required=True
+    )
+    p = add(ag, "verify", cmd_agentlog_verify, help="verify the tamper-evident hook decision log")
+    p.add_argument("--file", help="log path (default: <home>/agent-decisions.jsonl)")
+
+    p = add(sub, "coverage", cmd_coverage, help="scenario coverage: simulated logic vs live")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--baseline", default="docs/coverage-baseline.json")
+    p.add_argument("--check", action="store_true", help="exit 1 if a verified rule regressed")
+    p.add_argument("--update-baseline", action="store_true")
 
     p = add(
         sub, "doctor", cmd_doctor, help="read-only health checks (no network, no secrets shown)"

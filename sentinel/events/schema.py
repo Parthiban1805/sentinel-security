@@ -22,10 +22,7 @@ class SchemaError(ValueError):
 @cache
 def _validator(name: str) -> Draft202012Validator:
     schema = json.loads((SCHEMA_DIR / name).read_text(encoding="utf-8"))
-    # The shipped $id ("sentinel/x.schema.json#v1") carries a fragment, which JSON Schema forbids
-    # in $id, so the validator rejects it. Drop it here; fixing the files needs an ADR.
-    schema.pop("$id", None)
-    Draft202012Validator.check_schema(schema)
+    Draft202012Validator.check_schema(schema)  # the $id is a valid URI reference (ADR-0006)
     return Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER)
 
 

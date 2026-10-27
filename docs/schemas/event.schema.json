@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "sentinel/event.schema.json#v1",
+  "$id": "sentinel/v1/event.schema.json",
   "title": "Sentinel normalized security event",
   "type": "object",
   "additionalProperties": false,

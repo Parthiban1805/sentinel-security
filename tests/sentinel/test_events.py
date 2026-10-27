@@ -85,6 +85,19 @@ def test_identity_ref_rejects_unknown_kind():
         identity_ref("admin", "abcd")
 
 
+def test_schema_files_are_valid_json_schema_with_clean_ids():
+    import json
+
+    from jsonschema import Draft202012Validator
+
+    from sentinel.events.schema import SCHEMA_DIR
+
+    for name in ("event.schema.json", "asset.schema.json"):
+        schema = json.loads((SCHEMA_DIR / name).read_text(encoding="utf-8"))
+        Draft202012Validator.check_schema(schema)
+        assert "#" not in schema["$id"] and schema["$id"].startswith("sentinel/v1/")
+
+
 def test_validate_asset_requires_owner_field():
     asset = {
         "asset_id": "repo-demo",

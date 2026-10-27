@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import subprocess
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -123,7 +124,113 @@ def run(
         raise ScanError(f"gitleaks timed out after {timeout}s") from exc
     if proc.returncode != 0:
         raise ScanError(f"gitleaks exited with code {proc.returncode}")
-    return _relativize(parse(proc.stdout, key), target)
+    found = _relativize(parse(proc.stdout, key), target)
+    if mode == "dir":
+        found += _scan_json_files(
+            target, key, config, timeout, {(f.cred_ref, f.file) for f in found}
+        )
+    return found
+
+
+# --- JSON-escaped secrets (scenario S2) ---------------------------------------------------
+# gitleaks misses a key wrapped in JSON-escaped quotes (nested JSON in agent transcripts and
+# logs). We decode the JSON strings in memory and feed the decoded text to `gitleaks stdin`, so
+# nothing extra is written to disk.
+_JSON_SUFFIXES = {".json", ".jsonl"}
+_MAX_JSON_BYTES = 20 * 1024 * 1024
+_SKIP_DIRS = {
+    ".git",
+    ".sentinel",
+    "node_modules",
+    ".venv",
+    "venv",
+    "site-packages",
+    "__pycache__",
+    "dist",
+    "build",
+    "target",
+}
+
+
+def _json_strings(value: object, depth: int = 0) -> Iterator[str]:
+    """Yield every string inside a JSON value, also decoding strings that hold JSON."""
+    if isinstance(value, str):
+        yield value
+        stripped = value.strip()
+        if depth < 4 and stripped[:1] in ("{", "["):
+            try:
+                yield from _json_strings(json.loads(stripped), depth + 1)
+            except json.JSONDecodeError:
+                pass
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            yield str(k)
+            yield from _json_strings(v, depth)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _json_strings(item, depth)
+
+
+def decoded_json_text(raw: str) -> str:
+    """Decoded string values of a .json/.jsonl document, one per line ('' if not JSON)."""
+    docs: list[object] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if line[:1] in ("{", "["):
+            try:
+                docs.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    if not docs:
+        try:
+            docs.append(json.loads(raw))
+        except json.JSONDecodeError:
+            return ""
+    return "\n".join(s for doc in docs for s in _json_strings(doc))
+
+
+def _iter_json_files(target: Path) -> Iterator[Path]:
+    for current, dirs, files in os.walk(target):
+        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+        for name in files:
+            path = Path(current) / name
+            if path.suffix.lower() in _JSON_SUFFIXES:
+                yield path
+
+
+def _scan_json_files(
+    target: Path, key: bytes, config: Path, timeout: int, seen: set[tuple[str, str]]
+) -> list[Finding]:
+    cmd = [
+        find_gitleaks(), "stdin", "--no-banner", "--config", str(config),
+        "--report-format", "json", "--report-path", "-", "--exit-code", "0",
+    ]  # fmt: skip
+    out: list[Finding] = []
+    base = target.resolve()
+    for path in _iter_json_files(target):
+        try:
+            if path.stat().st_size > _MAX_JSON_BYTES:
+                continue
+            decoded = decoded_json_text(path.read_text(encoding="utf-8", errors="ignore"))
+        except OSError:
+            continue
+        if not decoded:
+            continue
+        try:
+            proc = subprocess.run(  # noqa: S603 (fixed argv, no shell)
+                cmd, input=decoded, capture_output=True, text=True, timeout=timeout,
+                check=False, env=_child_env(),
+            )  # fmt: skip
+        except subprocess.TimeoutExpired as exc:
+            raise ScanError(f"gitleaks timed out after {timeout}s") from exc
+        if proc.returncode != 0:
+            raise ScanError(f"gitleaks exited with code {proc.returncode}")
+        rel = path.resolve().relative_to(base).as_posix()
+        for f in parse(proc.stdout, key):
+            if (f.cred_ref, rel) not in seen:
+                seen.add((f.cred_ref, rel))
+                out.append(replace(f, file=rel, line=0))
+    return out
 
 
 def _relativize(found: list[Finding], target: Path) -> list[Finding]:

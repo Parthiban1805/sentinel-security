@@ -1,5 +1,6 @@
 """M2: gitleaks wrapper + findings registry. Fake keys only, generated at runtime."""
 
+import json
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -57,6 +58,49 @@ def test_parse_drops_secret_and_hashes() -> None:
     assert f.cred_ref == f"cred-fp-{fingerprint('TOPSECRETVALUE', key)}"
     assert f.file == "a/b.txt"
     assert "TOPSECRET" not in repr(f)
+
+
+def test_decoded_json_text_unescapes_nested_json() -> None:
+    inner = json.dumps({"cmd": 'export KEY="abc123"'})
+    line = json.dumps({"role": "tool", "content": inner})
+    assert 'export KEY="abc123"' in gitleaks.decoded_json_text(line + "\n")
+    assert gitleaks.decoded_json_text("not json at all") == ""
+
+
+@needs_gitleaks
+@pytest.mark.parametrize("nesting", [1, 2])
+def test_s2_key_in_json_escaped_quotes_is_found_without_leaking(
+    tmp_path: Path, nesting: int
+) -> None:
+    """S2 gap: gitleaks alone misses a key inside JSON-escaped quotes (nested JSON)."""
+    key = fake_google_key()
+    payload: object = f'gemini_api_key = "{key}"'
+    for _ in range(nesting):
+        payload = json.dumps({"content": payload})
+    scan_dir = tmp_path / "scan"
+    scan_dir.mkdir()
+    (scan_dir / "session.jsonl").write_text(json.dumps({"c": payload}) + "\n")
+    home = tmp_path / "home"
+    k = load_key(home)
+    hits = gitleaks.run(scan_dir, "dir", k, home)
+    assert [h.file for h in hits] == ["session.jsonl"]
+    assert hits[0].cred_ref == f"cred-fp-{fingerprint(key, k)}"
+    assert key not in repr(hits)
+    for path in home.rglob("*"):
+        if path.is_file():
+            assert key.encode() not in path.read_bytes()
+
+
+@needs_gitleaks
+def test_json_scan_skips_state_dir_and_dedups_with_plain_hits(tmp_path: Path) -> None:
+    key = fake_google_key()
+    scan_dir = tmp_path / "scan"
+    (scan_dir / ".sentinel").mkdir(parents=True)
+    (scan_dir / ".sentinel" / "x.json").write_text(json.dumps({"k": f'a = "{key}"'}))
+    (scan_dir / "plain.json").write_text(json.dumps({"gemini_api_key": key}))
+    home = tmp_path / "home"
+    hits = gitleaks.run(scan_dir, "dir", load_key(home), home)
+    assert [h.file for h in hits] == ["plain.json"]  # one finding, state dir ignored
 
 
 def test_load_key_is_atomic_and_validated(tmp_path: Path) -> None:

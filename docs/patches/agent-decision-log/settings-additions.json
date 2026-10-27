@@ -1,0 +1,28 @@
+{
+  "_comment": "MERGE these entries into .claude/settings.json (do not replace the file). Hooks and settings are protected files, so a human applies this.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__.*",
+        "hooks": [
+          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/mcp_log.py\"" }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_log.py\"" }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "deny": [
+      "Read(./.sentinel/**)",
+      "Edit(./.sentinel/**)",
+      "Write(./.sentinel/**)"
+    ]
+  }
+}

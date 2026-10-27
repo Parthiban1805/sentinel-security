@@ -10,7 +10,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-from sentinel import alerts, findings
+from sentinel import agentlog, alerts, findings
 from sentinel.config import Settings
 from sentinel.events.schema import format_time
 from sentinel.incidents import lifecycle
@@ -59,7 +59,7 @@ def run_once(
         try:
             stored += action()
             health[name] = "ok"
-        except (HttpError, gitleaks.ScanError) as exc:  # messages are scrubbed by design
+        except (HttpError, gitleaks.ScanError, ValueError) as exc:  # scrubbed messages only
             health[name] = f"error: {exc}"
         except Exception as exc:  # noqa: BLE001 (isolate every source; type only, never the text)
             health[name] = f"error: {type(exc).__name__}"
@@ -138,6 +138,19 @@ def run_once(
             for project in settings.gcp_projects:
                 guard(f"gcp:{project}:keys", partial(sync_keys, project))
                 guard(f"gcp:{project}:usage", partial(collect_usage, project))
+
+    log_path = home / agentlog.LOG_NAME
+    if log_path.exists():
+
+        def check_agent_log() -> int:
+            result = agentlog.verify_with_anchor(store, log_path)
+            if not result.ok:
+                line = f"{format_time(now)} CRITICAL agent decision log failed verification"
+                (home / "alerts.log").open("a", encoding="utf-8").write(line + "\n")
+                raise ValueError("; ".join(result.problems[:3]))
+            return 0
+
+        guard("agentlog", check_agent_log)
 
     created = lifecycle.open_incidents(store, now)
     alerted = []

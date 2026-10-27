@@ -41,6 +41,9 @@ select = ["E", "F", "I", "B", "UP", "S"]
 "tests/**" = ["S101", "S603", "S607", "E501"]
 "scripts/**" = ["S603", "S607"]
 "sentinel/alerts.py" = ["E501"]  # embedded PowerShell script
+# Hook patches are stdlib-only scripts that run under whatever python the user has (keep them
+# conservative: timezone.utc, bare except-pass so logging can never affect a decision).
+"docs/patches/**" = ["E501", "UP", "S110"]
 
 [tool.mypy]
 python_version = "3.11"

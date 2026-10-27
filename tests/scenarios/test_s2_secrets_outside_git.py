@@ -72,16 +72,28 @@ def test_s2_secret_found_in_non_git_location(tmp_path, name):
     assert all(key not in o for o in outputs), "secret value leaked into output"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="KNOWN GAP: gitleaks misses keys wrapped in JSON-escaped quotes (nested JSON in agent transcripts)",
-)
-def test_s2_json_escaped_quotes_in_transcript(tmp_path):
+def test_s2_plain_gitleaks_still_misses_json_escaped_quotes(tmp_path):
+    """Documents WHY Sentinel decodes JSON first: plain gitleaks misses escaped-quote keys."""
     key = fake_key()
     d = tmp_path / "scan"
     d.mkdir()
     (d / "session.jsonl").write_text('{"c":"gemini_api_key = \\"' + key + '\\""}\n')
-    assert scan(d, tmp_path / "r.json").returncode != 0
+    assert scan(d, tmp_path / "r.json").returncode == 0  # the blind spot, in raw gitleaks
+
+
+def test_s2_sentinel_scanner_closes_the_json_escaped_gap(tmp_path):
+    """Fixed in v0.3a: Sentinel's scanner decodes JSON strings before scanning."""
+    from sentinel.scanners import gitleaks as sentinel_gitleaks
+    from sentinel.security import load_key
+
+    key = fake_key()
+    d = tmp_path / "scan"
+    d.mkdir()
+    (d / "session.jsonl").write_text('{"c":"gemini_api_key = \\"' + key + '\\""}\n')
+    home = tmp_path / "home"
+    hits = sentinel_gitleaks.run(d, "dir", load_key(home), home)
+    assert [h.file for h in hits] == ["session.jsonl"]
+    assert key not in repr(hits)
 
 
 def test_s2_clean_location_has_no_findings(tmp_path):

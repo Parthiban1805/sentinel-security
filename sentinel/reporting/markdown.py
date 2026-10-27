@@ -97,7 +97,7 @@ def summary_report(store: Store, now: datetime) -> str:
     lines = [
         f"# Sentinel baseline report ({format_time(now)})",
         "",
-        f"**Gate A: {gate}**",
+        f"**Exposure status: {gate}**",
         "",
         "## Metrics",
         f"- Credentials tracked: {len(docs)}; live (open/pending/unverified): {len(live)}; "
