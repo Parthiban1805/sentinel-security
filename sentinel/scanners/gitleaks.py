@@ -8,7 +8,7 @@ anything else sees a finding. Logs go to stderr and contain no values.
 import json
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from sentinel.security import fingerprint
@@ -109,4 +109,18 @@ def run(
         raise ScanError(f"gitleaks timed out after {timeout}s") from exc
     if proc.returncode != 0:
         raise ScanError(f"gitleaks exited with code {proc.returncode}")
-    return parse(proc.stdout, key)
+    return _relativize(parse(proc.stdout, key), target)
+
+
+def _relativize(found: list[Finding], target: Path) -> list[Finding]:
+    """Working-tree hits carry absolute paths; make them repo-relative like history hits."""
+    base = str(target.resolve()).replace("\\", "/").rstrip("/") + "/"
+    out: list[Finding] = []
+    for f in found:
+        file = f.file
+        for prefix in (base, str(target).replace("\\", "/").rstrip("/") + "/"):
+            if file.startswith(prefix):
+                file = file[len(prefix) :]
+                break
+        out.append(replace(f, file=file))
+    return out

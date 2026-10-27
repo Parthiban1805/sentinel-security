@@ -77,6 +77,14 @@ def test_same_key_in_history_and_tree_is_one_credential(tmp_path: Path) -> None:
 
 
 @needs_gitleaks
+def test_working_tree_paths_are_repo_relative(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path, fake_google_key(), delete=False)
+    home = tmp_path / "home"
+    [hit, *_] = gitleaks.run(repo, "dir", load_key(home), home)
+    assert hit.file == "config.txt"
+
+
+@needs_gitleaks
 def test_cli_scan_registers_finding_without_leaking_value(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
