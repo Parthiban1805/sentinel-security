@@ -8,8 +8,10 @@ description: Use when scanning for leaked credentials (Git history, working tree
 Goal: find every exposed credential, record it safely, and drive it to revoked-and-verified.
 
 ## Hard rules
-- Always run scanners with redaction (`gitleaks ... --redact`). Never print raw match values.
-- Record findings by fingerprint (SHA-256 prefix) + file + line + commit + date. Never the value.
+- Always run scanners with redaction (`gitleaks ... --redact`) when you run them by hand. Never print raw match values.
+  Exception (ADR-0004): Sentinel's own scanner (`sentinel scan`) runs unredacted in-process, keyed-hashes each
+  value immediately and discards it. Prefer `sentinel scan` over hand-run gitleaks for registry work.
+- Record findings by fingerprint (keyed hash `cred-fp-...`, or SHA-256 prefix by hand) + file + line + commit + date. Never the value.
 - Reports go to `reports/` (git-ignored). Never commit reports.
 - You do not revoke keys. You produce the revoke list; a human revokes and confirms.
 
