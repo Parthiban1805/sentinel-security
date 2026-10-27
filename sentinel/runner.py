@@ -92,11 +92,19 @@ def run_once(
                 )
         if github_credential:
             gh = GitHubCollector(http, github_credential, key)
+
+            def collect_keys() -> int:
+                stored_count = add(gh.collect_user_keys(store, now))
+                gh.commit(store)  # state advances only after the events were stored
+                return stored_count
+
             if settings.github_user_keys:
-                guard("github:user_keys", lambda: add(gh.collect_user_keys(store, now)))
+                guard("github:user_keys", collect_keys)
 
             def collect_repo(repo: str) -> int:
-                return add(gh.collect_repo(store, repo, now, lookback))
+                stored_count = add(gh.collect_repo(store, repo, now, lookback))
+                gh.commit(store)
+                return stored_count
 
             for repo in settings.github_repos:
                 guard(f"github:{repo}", partial(collect_repo, repo))
@@ -113,7 +121,7 @@ def run_once(
                 return 0  # assets, not events
 
             def collect_usage(project: str) -> int:
-                return add(
+                stored_count = add(
                     gcp.collect_usage(
                         store,
                         project,
@@ -124,6 +132,8 @@ def run_once(
                         spend_multiple=settings.usage_multiple,
                     )
                 )
+                gcp.commit(store)  # baselines/cursor advance only after the events were stored
+                return stored_count
 
             for project in settings.gcp_projects:
                 guard(f"gcp:{project}:keys", partial(sync_keys, project))

@@ -30,11 +30,15 @@ destination is documented in the module README and an ADR. Research: `docs/resea
 - `verify-key` passes only on a recorded `deleteTime`, or when the exact key was previously seen in the inventory and is
   now gone. "Never seen" is not proof (a mistyped alias must not make a live key look revoked).
 - History scans exclude no paths (a key under `build/` is still an exposure).
-- **Open (not fixed):** `google-auth` makes its own HTTPS calls via `requests`, bypassing `HttpClient`, so its hosts
-  (token refresh; other hosts depend on the ADC credential type) are not enforced by the allowlist. Restrict to
-  `authorized_user` ADC and document the hosts before enabling the GCP collector. Cursors can advance before events are
-  stored if storing fails. The usage baseline can be inflated by a slow ramp. Missing diff `patch` is treated as "no
-  risky lines". Free-text CLI evidence is not screened for secrets. SQLite connections are not closed explicitly.
+- **Fixed in the follow-up:** collector state (cursors, baselines, key snapshot) is committed only after the events
+  were stored; the usage baseline ignores anomalous hours (a slow ramp cannot raise it) and warm-up flags a burst on a
+  new key; a withheld diff (`patch` missing) is treated as unknown and risky (R2); ADC accepts only `authorized_user`
+  credentials (service-account keys and external_account are refused); free text (evidence, notes, actor) is screened for
+  credential-shaped strings; SQLite connections are closed, with a 30 s lock timeout and WAL.
+- **Still open:** `google-auth` still performs its own HTTPS token refresh via `requests` (oauth2.googleapis.com for
+  `authorized_user`), outside HttpClient's allowlist; the free-text screen is a heuristic; `alerts.log` and the token
+  file have default Windows permissions (no ACL hardening); how GitHub's `since` filter treats backdated commits is
+  unverified against its docs.
 
 ## Consequences (security, operations, cost)
 - Security: new outbound traffic from the workstation to 4 hosts; read-only tokens limit blast radius if Sentinel

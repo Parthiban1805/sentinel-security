@@ -14,6 +14,7 @@ from sentinel.correlation.model import Match
 from sentinel.events.schema import format_time
 from sentinel.incidents import response, scoring
 from sentinel.inventory.blast import blast_radius
+from sentinel.redaction import check_free_text
 from sentinel.store.db import Store
 
 
@@ -167,6 +168,8 @@ def verify(
 ) -> None:
     if not evidence.strip():
         raise IncidentError("verification needs evidence")
+    evidence = check_free_text("evidence", evidence) or ""
+    actor = check_free_text("actor", actor) or ""
     incident = _get(store, iid)
     step = _step(incident, name)
     if step["response_class"] not in response.NO_APPROVAL_NEEDED and step["state"] not in (
@@ -201,6 +204,7 @@ def verify(
 def close(
     store: Store, iid: str, actor: str, now: datetime, *, unverified_note: str | None = None
 ) -> dict[str, Any]:
+    unverified_note = check_free_text("unverified note", unverified_note)
     incident = _get(store, iid)
     missing = [
         s["step"]

@@ -56,17 +56,45 @@ class Routes:
 
 def run(store: Store, routes: Routes) -> list[dict[str, Any]]:
     collector = GcpCollector(HttpClient(routes), FakeTokens())
-    return collector.collect_usage(
+    events = collector.collect_usage(
         store, "demo", NOW, lookback=timedelta(days=7), multiple=3.0, floor=50, spend_multiple=3.0
     )
+    collector.commit(store)  # what the runner does after the events were stored
+    return events
 
 
 def test_detect_needs_history_and_threshold() -> None:
     points = [(f"t{i:03d}", 10) for i in range(30)] + [("t999", 200)]
     anomalies, history = detect(points, [], 3.0, 50)
-    assert [a[0] for a in anomalies] == ["t999"]
-    assert len(history) == 31
+    assert [(a[0], a[3]) for a in anomalies] == [("t999", "volume_above_baseline")]
+    assert len(history) == 30  # the spike is NOT learned into the baseline
     assert detect([("x", 40)], [10] * 30, 3.0, 50)[0] == []  # above 3x mean but under floor
+
+
+def test_slow_ramp_cannot_inflate_the_baseline() -> None:
+    history = [10] * 30
+    for step in range(5):  # attacker ramps up: every hour is flagged, none is learned
+        anomalies, history = detect([(f"r{step}", 400)], history, 3.0, 50)
+        assert len(anomalies) == 1
+    assert sum(history) / len(history) == 10
+
+
+def test_new_key_warmup_flags_only_large_volume() -> None:
+    assert detect([("a", 100)], [], 3.0, 50)[0] == []  # modest use of a new key: quiet
+    [(when, count, _mean, reason)] = detect([("b", 400)], [], 3.0, 50)[0]
+    assert (when, count, reason) == ("b", 400, "warmup_volume_above_floor")  # stolen-key burst
+
+
+def test_adc_refuses_non_authorized_user_credentials() -> None:
+    import pytest
+
+    from sentinel.sources.gcp import AdcTokenProvider
+
+    class ServiceAccountLike:
+        pass
+
+    with pytest.raises(ValueError, match="authorized_user"):
+        AdcTokenProvider(ServiceAccountLike())
 
 
 def test_normalize_credential_id() -> None:

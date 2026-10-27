@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sentinel.events.schema import format_time, make_event
+from sentinel.redaction import check_free_text
 from sentinel.scanners.gitleaks import Finding
 from sentinel.store.db import Store
 
@@ -83,6 +84,9 @@ def set_status(
 ) -> dict[str, Any]:
     if status not in STATUSES:
         raise ValueError(f"status must be one of {STATUSES}")
+    actor = check_free_text("actor", actor) or ""
+    evidence = check_free_text("evidence", evidence)
+    note = check_free_text("note", note)
     doc = store.get_doc("findings", cred_ref)
     if doc is None:
         raise KeyError(f"unknown finding: {cred_ref}")

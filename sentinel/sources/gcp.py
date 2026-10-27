@@ -16,6 +16,7 @@ from typing import Any, Protocol
 from urllib.parse import quote, urlencode
 
 from sentinel.events.schema import format_time, make_event
+from sentinel.sources.base import DeferredState
 from sentinel.sources.http import HttpClient
 from sentinel.store.db import Store
 
@@ -31,14 +32,34 @@ class TokenProvider(Protocol):
 
 
 class AdcTokenProvider:
-    """Application Default Credentials (created by the user with gcloud; never by Sentinel)."""
+    """Application Default Credentials (created by the user with gcloud; never by Sentinel).
 
-    def __init__(self) -> None:
+    google-auth makes its own HTTPS calls (via requests), outside HttpClient's allowlist, so only
+    the narrowest credential type is accepted: `authorized_user` (gcloud auth
+    application-default login), which refreshes via oauth2.googleapis.com. Service-account keys
+    (long-lived private key) and external_account (can read arbitrary local files / call STS)
+    are refused (fail closed).
+    """
+
+    def __init__(self, creds: Any = None) -> None:
         import google.auth
         import google.auth.transport.requests
 
-        self._creds, _ = google.auth.default(scopes=[READ_ONLY_SCOPE])  # type: ignore[no-untyped-call]
+        if creds is None:
+            creds, _ = google.auth.default(scopes=[READ_ONLY_SCOPE])  # type: ignore[no-untyped-call]
+        self.check_credentials(creds)
+        self._creds = creds
         self._request = google.auth.transport.requests.Request()  # type: ignore[no-untyped-call]
+
+    @staticmethod
+    def check_credentials(creds: Any) -> None:
+        from google.oauth2 import credentials as user_credentials
+
+        if not isinstance(creds, user_credentials.Credentials):
+            raise ValueError(
+                "ADC must be an authorized_user credential (run `gcloud auth application-default "
+                f"login`); refusing credential type {type(creds).__name__}"
+            )
 
     def token(self) -> str:
         if not self._creds.valid:
@@ -57,24 +78,34 @@ def alias_key(project: str, credential_id: str) -> str:
 
 def detect(
     points: list[tuple[str, int]], history: list[int], multiple: float, floor: int
-) -> tuple[list[tuple[str, int, float]], list[int]]:
-    """Pure: return (anomalies as (time, count, mean), updated history). Points must be sorted."""
-    anomalies: list[tuple[str, int, float]] = []
+) -> tuple[list[tuple[str, int, float, str]], list[int]]:
+    """Pure: return (anomalies as (time, count, mean, reason), updated history).
+
+    Points must be sorted. Anomalous hours are NOT added to the history, so a spike or a slow
+    ramp cannot raise the baseline and hide later abuse. During warm-up (fewer than 24 hours of
+    history) only a count above floor * multiple is flagged, so a stolen new key cannot hide.
+    """
+    anomalies: list[tuple[str, int, float, str]] = []
     hist = list(history)
     for when, count in points:
+        mean = sum(hist) / len(hist) if hist else 0.0
         if len(hist) >= _MIN_HISTORY:
-            mean = sum(hist) / len(hist)
             if count > max(multiple * mean, floor):
-                anomalies.append((when, count, mean))
+                anomalies.append((when, count, mean, "volume_above_baseline"))
+                continue
+        elif count > floor * multiple:
+            anomalies.append((when, count, mean, "warmup_volume_above_floor"))
+            continue
         hist.append(count)
         hist = hist[-_HISTORY_HOURS:]
     return anomalies, hist
 
 
-class GcpCollector:
+class GcpCollector(DeferredState):
     name = "gcp"
 
     def __init__(self, client: HttpClient, tokens: TokenProvider) -> None:
+        super().__init__()
         self._client = client
         self._tokens = tokens
 
@@ -211,7 +242,7 @@ class GcpCollector:
             base = store.get_doc("baselines", base_key) or {"history": [], "last": ""}
             points = [p for p in self._points(ts) if p[0] > base["last"]]
             anomalies, history = detect(points, base["history"], multiple, floor)
-            hits = [(t, c, m, "volume_above_baseline") for t, c, m in anomalies]
+            hits = list(anomalies)
             if cred in dead:
                 hits += [(t, c, 0.0, "use_of_dead_key") for t, c in points if c > 0]
             for when, count, mean, reason in hits:
@@ -236,14 +267,14 @@ class GcpCollector:
                     )
                 )
             if points:
-                store.put_doc("baselines", base_key, {"history": history, "last": points[-1][0]})
+                self.defer("baselines", base_key, {"history": history, "last": points[-1][0]})
 
         for ts in self._series(project, start, end, None):
             base_key = f"gcp:{project}:project"
             base = store.get_doc("baselines", base_key) or {"history": [], "last": ""}
             points = [p for p in self._points(ts) if p[0] > base["last"]]
             anomalies, history = detect(points, base["history"], spend_multiple, floor)
-            for when, count, mean in anomalies:
+            for when, count, mean, _reason in anomalies:
                 events.append(
                     make_event(
                         event_type="spend_anomaly",
@@ -262,6 +293,6 @@ class GcpCollector:
                     )
                 )
             if points:
-                store.put_doc("baselines", base_key, {"history": history, "last": points[-1][0]})
-        store.put_doc("cursors", cursor_key, {"since": end})
+                self.defer("baselines", base_key, {"history": history, "last": points[-1][0]})
+        self.defer("cursors", cursor_key, {"since": end})
         return events

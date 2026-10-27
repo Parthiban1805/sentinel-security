@@ -43,6 +43,29 @@ CREATE TABLE IF NOT EXISTS audit (
 """
 
 
+class _Conn:
+    """Context manager: commit on success, roll back on error, ALWAYS close; wait on locks.
+
+    (sqlite3's own `with` only commits; it leaves the connection open.)
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._conn = sqlite3.connect(path, timeout=30)
+        self._conn.execute("PRAGMA journal_mode=WAL")
+
+    def __enter__(self) -> sqlite3.Connection:
+        return self._conn
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        try:
+            if exc_type is None:
+                self._conn.commit()
+            else:
+                self._conn.rollback()
+        finally:
+            self._conn.close()
+
+
 class Store:
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -50,8 +73,8 @@ class Store:
         with self._connect() as conn:
             conn.executescript(_DDL)
 
-    def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self._path)
+    def _connect(self) -> "_Conn":
+        return _Conn(self._path)
 
     # events -------------------------------------------------------------
     def add_event(self, event: dict[str, Any]) -> bool:

@@ -13,6 +13,7 @@ from urllib.parse import quote
 from sentinel.events.refs import identity_ref
 from sentinel.events.schema import format_time, make_event
 from sentinel.security import fingerprint
+from sentinel.sources.base import DeferredState
 from sentinel.sources.http import HttpClient
 from sentinel.store.db import Store
 
@@ -35,10 +36,11 @@ def added_line_flags(patch: str) -> dict[str, bool]:
     }
 
 
-class GitHubCollector:
+class GitHubCollector(DeferredState):
     name = "github"
 
     def __init__(self, client: HttpClient, token: str, key: bytes) -> None:
+        super().__init__()
         self._client = client
         self._headers = {
             "Authorization": f"Bearer {token}",
@@ -69,7 +71,7 @@ class GitHubCollector:
         keys = self._get_all(f"{API}/user/keys?per_page=100")
         current = {str(k["id"]): k.get("created_at", "") for k in keys}
         snapshot = store.get_doc("snapshots", "github:user_keys")
-        store.put_doc("snapshots", "github:user_keys", {"ids": current, "time": format_time(now)})
+        self.defer("snapshots", "github:user_keys", {"ids": current, "time": format_time(now)})
         if snapshot is None:
             return []  # first run establishes the baseline; no alerts
         added = sorted(set(current) - set(snapshot["ids"]))
@@ -113,9 +115,14 @@ class GitHubCollector:
             files = [
                 f for f in detail.get("files", []) if f["filename"].startswith(".github/workflows/")
             ]
-            flags = {"adds_network": False, "adds_secret_ref": False}
+            flags = {"adds_network": False, "adds_secret_ref": False, "patch_missing": False}
             for f in files:
-                for name, value in added_line_flags(f.get("patch", "")).items():
+                if "patch" not in f:
+                    # GitHub omits the diff for large/binary-like changes: content is UNKNOWN,
+                    # not safe. Treat it as risky rather than silently "no risky lines".
+                    flags["patch_missing"] = True
+                    continue
+                for name, value in added_line_flags(f["patch"]).items():
                     flags[name] = flags[name] or value
             login = (c.get("author") or {}).get("login")
             when = c["commit"]["author"]["date"]
@@ -126,7 +133,7 @@ class GitHubCollector:
                     source="github_api",
                     asset_id=asset,
                     time=datetime.fromisoformat(when.replace("Z", "+00:00")),
-                    severity="medium" if any(flags.values()) else "low",
+                    severity="medium" if any(flags.values()) else "low",  # unknown diff counts
                     confidence="high",
                     evidence_ref=f"github/{repo}/commit/{c['sha']}",
                     event_id=f"github:{repo}:workflow:{c['sha']}",
@@ -135,6 +142,9 @@ class GitHubCollector:
                         **flags,
                         "files": [f["filename"] for f in files],
                         "actor_is_maintainer": bool(login) and login in maintainers,
+                        # HYPOTHESIS basis: the author login comes from the commit's author
+                        # email, which can be forged; it is not proof of who pushed.
+                        "actor_basis": "commit author login (unverified)",
                         "commit": c["sha"],
                     },
                 )
@@ -157,5 +167,5 @@ class GitHubCollector:
                     attributes={"tag": rel.get("tag_name", "")},
                 )
             )
-        store.put_doc("cursors", cursor_key, {"since": format_time(now)})
+        self.defer("cursors", cursor_key, {"since": format_time(now)})
         return events

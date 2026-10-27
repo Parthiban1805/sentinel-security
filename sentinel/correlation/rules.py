@@ -185,7 +185,8 @@ def r2_risky_workflow_change(events: list[Event], ctx: Context) -> list[Match]:
         if e["event_type"] != "workflow_changed":
             continue
         attrs = e.get("attributes") or {}
-        risky = [k for k in ("adds_network", "adds_secret_ref") if attrs.get(k)]
+        # patch_missing: GitHub withheld the diff, so the content is unknown (treated as risky).
+        risky = [k for k in ("adds_network", "adds_secret_ref", "patch_missing") if attrs.get(k)]
         if not risky or attrs.get("actor_is_maintainer", True):
             continue
         matches.append(

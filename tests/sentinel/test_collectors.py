@@ -152,7 +152,9 @@ def test_ssh_keys_first_run_is_baseline_then_diff(tmp_path: Path) -> None:
         ],
         "https://api.github.com/user": {"login": "octo"},
     }
-    assert collector(routes).collect_user_keys(store, NOW) == []
+    first = collector(routes)
+    assert first.collect_user_keys(store, NOW) == []
+    first.commit(store)  # the runner commits state only after events were stored
     routes["https://api.github.com/user/keys"] = [
         {"id": 1, "created_at": "2026-01-01T00:00:00Z", "key": "ssh-ed25519 AAAA"},
         {"id": 2, "created_at": "2026-10-27T11:00:00Z", "key": "ssh-ed25519 BBBB"},
@@ -223,7 +225,33 @@ def test_r8_release_within_window_and_near_miss(tmp_path: Path) -> None:
     assert correlate(late, Context()) == []
 
 
-def test_repo_cursor_advances(tmp_path: Path) -> None:
+def test_repo_cursor_advances_only_on_commit(tmp_path: Path) -> None:
     store = Store(tmp_path / "s.db")
-    collector(repo_routes("maint", "", None)).collect_repo(store, "o/r", NOW, timedelta(days=7))
+    c = collector(repo_routes("maint", "", None))
+    c.collect_repo(store, "o/r", NOW, timedelta(days=7))
+    assert store.get_doc("cursors", "github:o/r") is None  # not yet: events not stored
+    c.commit(store)
     assert store.get_doc("cursors", "github:o/r") == {"since": "2026-10-27T12:00:00Z"}
+
+
+def test_missing_patch_is_unknown_and_risky_not_safe(tmp_path: Path) -> None:
+    """GitHub omits `patch` for large diffs: that must not look like 'no risky lines'."""
+    routes = repo_routes("stranger", "", None)
+    routes["https://api.github.com/repos/o/r/commits/abc"] = {
+        "files": [{"filename": ".github/workflows/ci.yml"}]  # no "patch" key
+    }
+    events = collector(routes).collect_repo(Store(tmp_path / "s.db"), "o/r", NOW, timedelta(days=7))
+    [change] = events
+    assert change["attributes"]["patch_missing"] is True
+    assert [m.rule_id for m in correlate(events, Context())] == ["R2"]
+
+
+def test_failed_store_does_not_advance_state(tmp_path: Path) -> None:
+    """If saving events fails, the cursor must stay put so the change is re-collected."""
+    store = Store(tmp_path / "s.db")
+    c = collector(repo_routes("stranger", "+ run: curl https://x.invalid", None))
+    events = c.collect_repo(store, "o/r", NOW, timedelta(days=7))
+    assert events and store.get_doc("cursors", "github:o/r") is None
+    c.discard()
+    c.commit(store)  # nothing pending after a discarded (failed) run
+    assert store.get_doc("cursors", "github:o/r") is None
