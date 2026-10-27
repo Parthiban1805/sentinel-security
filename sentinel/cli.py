@@ -13,6 +13,7 @@ from typing import Any
 from sentinel import (
     __version__,
     agentlog,
+    audit,
     canaries,
     config,
     coverage,
@@ -34,6 +35,7 @@ from sentinel.scanners import gitleaks
 from sentinel.security import fingerprint, load_key
 from sentinel.simulation import scenarios
 from sentinel.sources.gcp import AdcTokenProvider, GcpCollector, alias_key, normalize_credential_id
+from sentinel.sources.github import GitHubCollector
 from sentinel.sources.http import HttpClient, HttpError
 from sentinel.store.db import Store
 
@@ -370,6 +372,38 @@ def cmd_init(args: argparse.Namespace) -> int:
     return onboarding.run_init(opts, print, ask, lambda q: getpass.getpass(f"{q}: "))
 
 
+def cmd_audit(args: argparse.Namespace) -> int:
+    """Branch protection and secret-scanning settings of the watched GitHub repositories."""
+    settings = config.load(Path(args.config))
+    repos = list(args.repo or settings.github_repos)
+    if not repos:
+        raise ValueError("no repositories: pass --repo owner/name or list them in the config")
+    repos = [config.validate_repo(r) for r in repos]
+    token = runner.github_token(_home(args))
+    if not token:
+        raise ValueError(f"no GitHub token (env {runner.GITHUB_TOKEN_ENV} or the state-dir file)")
+    gh = GitHubCollector(HttpClient(), token, load_key(_home(args)))
+    results: dict[str, list[audit.AuditFinding]] = {}
+    store = _store(args) if args.record else None
+    now = _now()
+    for repo in repos:
+        repo_probe, protection = gh.audit_inputs(repo)
+        if repo_probe[0] == 401:
+            raise ValueError("GitHub rejected the token (HTTP 401): expired, revoked or wrong")
+        found = audit.evaluate(repo_probe, protection)
+        results[repo] = found
+        if store is not None:
+            stored = sum(store.add_event(e) for e in audit.to_events(repo, found, now))
+            store.put_doc("snapshots", audit.snapshot_key(repo), audit.new_snapshot(found, now))
+            print(f"recorded {stored} new config_drift event(s) for {repo}", file=sys.stderr)
+    print(audit.format_findings(results), end="")
+    worst = max((audit_sev.index(f.severity) for fs in results.values() for f in fs), default=-1)
+    return 1 if args.fail_on and worst >= audit_sev.index(args.fail_on) else 0
+
+
+audit_sev = ("low", "medium", "high")
+
+
 def cmd_canary_plant(args: argparse.Namespace) -> int:
     key = load_key(_home(args))
     doc = canaries.plant(
@@ -651,6 +685,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-token-prompt", action="store_true", help="do not ask for a GitHub token")
     p.add_argument("--no-gitignore", action="store_true", help="do not edit .gitignore")
     p.add_argument("--force", action="store_true", help="replace an existing config (keeps a .bak)")
+
+    p = add(sub, "audit", cmd_audit, help="GitHub branch protection and secret-scanning audit")
+    p.add_argument("--config", default="sentinel.toml")
+    p.add_argument("--repo", action="append", help="owner/name (default: the configured repos)")
+    p.add_argument("--record", action="store_true", help="store findings as config_drift events")
+    p.add_argument("--fail-on", choices=list(audit_sev))
 
     can = sub.add_parser("canary", help="decoy credential files (rule R7)").add_subparsers(
         dest="sub", required=True

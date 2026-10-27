@@ -39,6 +39,8 @@ class Settings:
     hygiene_ignore: tuple[str, ...] = ()  # "H2:server/.env" or "W4:*" (documented exceptions)
     probe_hosts: tuple[ProbeHost, ...] = ()  # hosts the owner confirmed they own
     probe_interval_hours: int = 24
+    github_audit: bool = True  # branch protection / secret scanning audit of the watched repos
+    github_audit_interval_hours: int = 24
     extra: dict[str, object] = field(default_factory=dict)
 
 
@@ -79,4 +81,6 @@ def load(path: Path) -> Settings:
         hygiene_ignore=tuple(data.get("hygiene", {}).get("ignore", [])),
         probe_hosts=_probe_hosts(data),
         probe_interval_hours=int(data.get("probes", {}).get("interval_hours", 24)),
+        github_audit=bool(gh.get("audit", True)),
+        github_audit_interval_hours=int(gh.get("audit_interval_hours", 24)),
     )

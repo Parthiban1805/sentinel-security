@@ -6,7 +6,7 @@ path containing `keyString` (raw API key retrieval).
 
 | Collector | Destination | Auth | Reads | Emits |
 |---|---|---|---|---|
-| `github.py` | `api.github.com` | env `SENTINEL_GITHUB_TOKEN`, fine-grained, read-only | `/user`, `/user/keys`, repo commits (workflow paths + 90-day authors), commit detail, releases | `ssh_key_added`, `workflow_changed`, `release_published` |
+| `github.py` | `api.github.com` | env `SENTINEL_GITHUB_TOKEN`, fine-grained, read-only | `/user`, `/user/keys`, repo commits (workflow paths + 90-day authors), commit detail, releases, repo settings and default-branch protection (audit; needs Administration: read) | `ssh_key_added`, `workflow_changed`, `release_published`, `config_drift` (audit) |
 | `gcp.py` | `monitoring.googleapis.com`, `apikeys.googleapis.com`, `oauth2.googleapis.com` | Application Default Credentials, scope `cloud-platform.read-only` | `consumed_api` request counts by `credential_id`; API key metadata (never key strings) | `credential_usage_anomaly`, `spend_anomaly` (proxy) |
 
 Stored: ids, times, counts, flags, fingerprints. Never stored: tokens, public key bodies, diffs, request bodies.

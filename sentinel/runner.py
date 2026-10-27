@@ -10,7 +10,16 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-from sentinel import agentlog, alerts, canaries, dependencies, findings, hygiene, probes
+from sentinel import (
+    agentlog,
+    alerts,
+    audit,
+    canaries,
+    dependencies,
+    findings,
+    hygiene,
+    probes,
+)
 from sentinel.config import ProbeHost, Settings
 from sentinel.events.schema import format_time
 from sentinel.incidents import lifecycle
@@ -132,6 +141,23 @@ def run_once(
 
             for repo in settings.github_repos:
                 guard(f"github:{repo}", partial(collect_repo, repo))
+
+            def audit_repo(repo: str) -> int:
+                if not audit.due(store, repo, now, settings.github_audit_interval_hours):
+                    return 0
+                repo_probe, protection = gh.audit_inputs(repo)
+                if repo_probe[0] == 401:  # a rejected token is a health failure, not a finding
+                    raise ValueError(
+                        "GitHub rejected the token (HTTP 401): expired, revoked or wrong"
+                    )
+                found = audit.evaluate(repo_probe, protection)
+                stored_count = add(audit.to_events(repo, found, now))
+                store.put_doc("snapshots", audit.snapshot_key(repo), audit.new_snapshot(found, now))
+                return stored_count
+
+            if settings.github_audit:
+                for repo in settings.github_repos:
+                    guard(f"audit:{repo}", partial(audit_repo, repo))
 
     for host in settings.probe_hosts:  # exposure probes (S1/S15): only hosts the owner confirmed
 

@@ -14,7 +14,7 @@ from sentinel.events.refs import identity_ref
 from sentinel.events.schema import format_time, make_event
 from sentinel.security import fingerprint
 from sentinel.sources.base import DeferredState
-from sentinel.sources.http import HttpClient
+from sentinel.sources.http import HttpClient, HttpError
 from sentinel.store.db import Store
 
 API = "https://api.github.com"
@@ -64,6 +64,22 @@ class GitHubCollector(DeferredState):
 
     def _ident(self, login: str | None) -> str | None:
         return identity_ref("user", fingerprint(login, self._key)[:12]) if login else None
+
+    def _try(self, url: str) -> tuple[int, Any, str | None]:
+        """(status, json or None, error hint). HTTP errors become data, never the body text."""
+        try:
+            resp = self._client.get(url, self._headers)
+            return resp.status, resp.json(), None
+        except HttpError as exc:
+            return exc.status or 0, None, exc.hint
+
+    def audit_inputs(self, repo: str) -> tuple[Any, Any]:
+        """Raw answers for the protection audit: (repository, default-branch protection)."""
+        base = f"{API}/repos/{quote(repo, safe='/')}"
+        repo_probe = self._try(base)
+        meta = repo_probe[1] if isinstance(repo_probe[1], dict) else {}
+        branch = quote(str(meta.get("default_branch", "main")), safe="")
+        return repo_probe, self._try(f"{base}/branches/{branch}/protection")
 
     # SSH keys -----------------------------------------------------------------------
     def collect_user_keys(self, store: Store, now: datetime) -> list[dict[str, Any]]:

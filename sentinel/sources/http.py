@@ -29,11 +29,27 @@ _RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
 
 
 class HttpError(RuntimeError):
-    """Request refused or failed (no secrets in the message)."""
+    """Request refused or failed (no secrets in the message).
 
-    def __init__(self, message: str, status: int | None = None) -> None:
+    `hint` is a small fixed vocabulary derived from the error body (never the body itself):
+    "plan_limit", "no_permission", "not_protected" or None."""
+
+    def __init__(self, message: str, status: int | None = None, hint: str | None = None) -> None:
         super().__init__(message)
         self.status = status
+        self.hint = hint
+
+
+def error_hint(body: bytes) -> str | None:
+    """Classify a GitHub-style error body into a fixed label. The text is never stored or shown."""
+    text = body[:400].decode("utf-8", errors="ignore").lower()
+    if "upgrade to github pro" in text or "make this repository public" in text:
+        return "plan_limit"
+    if "resource not accessible" in text:
+        return "no_permission"
+    if "branch not protected" in text:
+        return "not_protected"
+    return None
 
 
 @dataclass(frozen=True)
@@ -94,7 +110,11 @@ class UrllibTransport:
                     raise HttpError(f"response too large from {urlsplit(url).hostname}")
                 return Response(resp.status, {k.lower(): v for k, v in resp.headers.items()}, data)
         except urllib.error.HTTPError as exc:
-            return Response(exc.code, {k.lower(): v for k, v in exc.headers.items()}, b"")
+            try:
+                error_body = exc.read(2048)  # only to classify the error; never kept or shown
+            except OSError:
+                error_body = b""
+            return Response(exc.code, {k.lower(): v for k, v in exc.headers.items()}, error_body)
         except (urllib.error.URLError, TimeoutError) as exc:
             raise HttpError(f"network error contacting {urlsplit(url).hostname}") from exc
 
@@ -150,6 +170,13 @@ class HttpClient:
                 self._sleep(min(2**attempt, 30))
                 continue
             if resp.status >= 300:  # includes redirects, which are never followed
-                raise HttpError(f"HTTP {resp.status} from {where}", resp.status)
+                note = (
+                    " (the token was rejected: expired, revoked or wrong)"
+                    if resp.status == 401
+                    else ""
+                )
+                raise HttpError(
+                    f"HTTP {resp.status} from {where}{note}", resp.status, error_hint(resp.body)
+                )
             return resp
         raise HttpError(f"retries exhausted for {where}")  # pragma: no cover

@@ -8,6 +8,8 @@ paths = ["P:/development/example-repo"]
 [github]
 repos = ["owner/repo"]
 user_keys = true          # watch the authenticated user's SSH keys
+audit = true              # branch protection + secret scanning audit (token needs Administration: read)
+audit_interval_hours = 24
 
 [gcp]
 projects = ["my-demo-project"]

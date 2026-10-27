@@ -41,6 +41,11 @@ Setup (all done by you, never by the agent):
 3. Google Cloud (optional): `gcloud auth application-default login` with a principal that can only read monitoring and
    list API keys (`apikeys.keys.list`, `monitoring.timeSeries.list`), then `sentinel init --force --gcp-project <id>`.
 4. Check anything at any time: `uv run sentinel doctor`.
+5. For the GitHub protection audit (`uv run sentinel audit`, also part of `sentinel run`), add the fine-grained token permission
+   **Administration: read**. Without it the audit says "cannot verify" rather than guessing. On a free plan, private repositories
+   cannot have branch protection at all; the audit reports that as a plan limit.
+6. Other v0.4 commands: `sentinel hygiene` (repo and CI policy, dependencies), `sentinel probe` (your hosts for exposed files),
+   `sentinel canary plant|list|check|disarm` (decoy credential files), `sentinel coverage` (what is verified vs live).
 
 ```
 uv run sentinel run                     # scan + collect + correlate + alert, prints collector health

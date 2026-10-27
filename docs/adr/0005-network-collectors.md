@@ -35,6 +35,13 @@ destination is documented in the module README and an ADR. Research: `docs/resea
   new key; a withheld diff (`patch` missing) is treated as unknown and risky (R2); ADC accepts only `authorized_user`
   credentials (service-account keys and external_account are refused); free text (evidence, notes, actor) is screened for
   credential-shaped strings; SQLite connections are closed, with a 30 s lock timeout and WAL.
+- **GitHub protection audit (v0.4):** two more read-only GETs per repository, at most once per `audit_interval_hours` (default 24):
+  `GET /repos/{owner}/{repo}` (default branch, visibility, `security_and_analysis`) and
+  `GET /repos/{owner}/{repo}/branches/{default}/protection`. Same host, token and client rules as above. Reading these fully needs the
+  fine-grained token permission **Administration: read**; without it GitHub answers 403 "Resource not accessible", which the audit reports as
+  "cannot verify" (low confidence), not as a problem. On a free plan private repositories answer 403 "Upgrade to GitHub Pro ...", reported as
+  a plan limit. HTTP error bodies are read (2 KB) only to map them to a fixed label (`plan_limit`, `no_permission`, `not_protected`) and are
+  never stored or shown. A 401 is a health failure ("token expired, revoked or wrong"), never a finding.
 - **TLS:** certificates are always verified. Sentinel uses the OS verifier (`truststore==0.10.0`) because Python's
   bundled path failed with "unable to get issuer certificate" on a machine behind a VPN/TLS-inspecting tool (the same
   failure occurred with plain `urllib`). A test asserts `CERT_REQUIRED` and hostname checking stay on. Note
