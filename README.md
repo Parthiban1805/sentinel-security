@@ -9,7 +9,7 @@ CLAUDE.md                     Project memory: rules, conventions, where things a
 .claude/hooks/                Guard hooks: sensitive files, risky bash, secret scan after edits
 .claude/skills/               6 project skills (SKILL.md each)
 .claude/agents/               security-reviewer, scenario-tester subagents
-.claude/commands/             /phase-a-baseline /new-scenario /new-rule /security-review /incident
+.claude/commands/             /new-scenario /new-rule /security-review /incident
 .mcp.json                     Empty MCP allowlist (add servers only after review)
 docs/spec/                    Roadmap, correlation rules; put the full spec export here
 docs/schemas/                 Event and asset JSON schemas
@@ -32,8 +32,7 @@ policies/agent-policy.md      AI agent security policy (13 rules)
    On Windows, if `python3` is not on PATH, change `python3` to `python` (or `py`) in
    `.claude/settings.json`.
 6. In GitHub repo settings, enable secret scanning and push protection, and protect `main`.
-7. Start Claude Code in the repo and run `/permissions` to confirm the rules loaded, then
-   `/phase-a-baseline`.
+7. Start Claude Code in the repo and run `/permissions` to confirm the rules loaded.
 
 ## Verify the guards work (safe tests)
 - Ask Claude Code to read `.env` -> should be blocked.

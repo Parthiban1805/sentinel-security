@@ -11,8 +11,9 @@ Central question: detect a problem -> understand what it could affect -> determi
 being exploited -> stop it safely -> verify -> improve.
 
 ## Current phase
-**Phase A: Baseline** (see `docs/spec/roadmap.md`). Do not start Phase B/C/D work unless the user
-says the gate has passed. Gate A = no live exposed keys + every asset has an owner.
+**Building the product.** Follow `docs/product-plan.md` (releases v0.3 to v1.0) and `docs/spec/roadmap.md`
+(phases B, C, D). The repos used as test material are dummy repos: baselining them is out of scope.
+Confirm scope with the user before starting each release.
 
 ## Non-negotiable rules (security)
 1. NEVER print, log, store, commit or echo a secret value. Refer to secrets only by fingerprint
@@ -31,7 +32,7 @@ says the gate has passed. Gate A = no live exposed keys + every asset has an own
 8. All generated code, infra and recommendations require human review before production use.
 
 ## Engineering conventions
-- Language: Python 3 for the Phase A CLI and collectors (org scaffold standard applies when the
+- Language: Python 3 for the CLI and collectors (org scaffold standard applies when the
   service/UI repos are created: see "Open decision" below).
 - Layout (create as needed): `sentinel/` package with `inventory/`, `scanners/`, `events/`,
   `correlation/`, `incidents/`, `reporting/`; tests in `tests/` mirroring the package.
@@ -58,7 +59,7 @@ says the gate has passed. Gate A = no live exposed keys + every asset has an own
 Skills (auto-loaded when relevant): `secret-exposure-triage`, `incident-response`,
 `scenario-test-authoring`, `correlation-rule-authoring`, `agent-policy-enforcement`,
 `event-schema`.
-Commands: `/phase-a-baseline`, `/new-scenario`, `/new-rule`, `/security-review`, `/incident`.
+Commands: `/new-scenario`, `/new-rule`, `/security-review`, `/incident`.
 Subagents: `security-reviewer` (read-only review), `scenario-tester` (writes and runs tests).
 
 ## Workflow

@@ -1,6 +1,6 @@
 ---
 name: secret-exposure-triage
-description: Use when scanning for leaked credentials (Git history, working tree, artifacts, workstations) or triaging scanner findings. Covers running gitleaks safely, redacting output, classifying findings, and producing a fingerprint-only report. Trigger for Phase A baseline scans, scenario S0/S2/S3 work, or any "find secrets" request.
+description: Use when scanning for leaked credentials (Git history, working tree, artifacts, workstations) or triaging scanner findings. Covers running gitleaks safely, redacting output, classifying findings, and producing a fingerprint-only report. Trigger for scenario S0/S2/S3 work, or any "find secrets" request.
 ---
 
 # Secret exposure triage
