@@ -149,6 +149,13 @@ class Store:
             ).fetchone()
         return json.loads(row[0]) if row else None
 
+    def delete_doc(self, table: str, key: str) -> bool:
+        if table not in _DOC_TABLES:
+            raise ValueError(f"unknown table: {table}")
+        with self._connect() as conn:
+            cur = conn.execute(f"DELETE FROM {table} WHERE k = ?", (key,))  # noqa: S608 (whitelisted)
+            return cur.rowcount > 0
+
     def docs(self, table: str) -> list[dict[str, Any]]:
         if table not in _DOC_TABLES:
             raise ValueError(f"unknown table: {table}")

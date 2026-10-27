@@ -55,6 +55,21 @@ New rules: use the spec format in `.claude/skills/correlation-rule-authoring/SKI
 - **Inputs:** `workflow_changed` then `release_published` on the same repo asset. **Window:** 0 to 24h `[confirm]`.
 - **Output:** High floor, confidence low (most such releases are normal); a provenance review is the required step.
 
+## Implemented in v0.4 (exposure probes; tests in `tests/sentinel/test_probes.py`)
+
+### R10: a sensitive path is served by our own host (S1, S15)
+- **Inputs:** `exposed_service` events from `sentinel probe` (`attributes.path`, `probe`, `signature`, `status`, `base_url`).
+- **Join key:** one incident per host asset and path. No time window: an exposure persists until fixed.
+- **Condition:** a probe saw HTTP 200/206 for a fixed sensitive path AND the first bytes matched that file's SHAPE (env file, git
+  config, SQL dump, archive, key...). A catch-all page that returns 200 for everything does not match, because shapes are tested.
+- **Output:** severity floor taken from the probe (critical = secrets likely inside; high = source or data; medium = information
+  leak), confidence high that the file is served, **unknown whether anything was fetched or used** (hypothesis: the contents may
+  already be in an attacker's hands; credential use is rule R1's evidence).
+- **Automatic verification:** the step `verify_path_closed` re-probes the exact path; it passes only on a definitive answer without
+  the file (404/403/410 or a 200 that no longer matches). A network error proves nothing and fails the step.
+- **False positives:** a deliberately public sample file that happens to look like an env file. **Known gaps:** fixed path list;
+  only the first 512 bytes are inspected; hosts behind authentication or a WAF that hides the path from the probe are not seen.
+
 ### Data-source limits (facts, `docs/research/collectors.md`)
 - R1 with Google data: usage = per-key request volume above max(3x 7-day hourly mean, floor), or any use of a
   key whose finding is revoked/verified. Google gives no caller IP/region; data is up to ~30 min late.

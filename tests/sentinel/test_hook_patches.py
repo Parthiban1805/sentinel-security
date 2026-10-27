@@ -297,7 +297,121 @@ def test_concurrent_hooks_keep_the_chain_intact(tmp_path: Path) -> None:
     for p in procs:
         p.wait(timeout=30)
     result = agentlog.verify(tmp_path / agentlog.LOG_NAME)
-    assert result.ok and result.entries == 8, result.problems
+    # Invariant under any load: the chain is intact and NO decision vanishes silently: every
+    # hook either chained its entry or left a visible drop note.
+    assert result.ok, result.problems
+    assert result.entries + result.dropped == 8
+
+
+def test_lock_contention_never_changes_the_decision_and_is_never_silent(tmp_path: Path) -> None:
+    (tmp_path / "agent-decisions.lock").write_text("held")  # a fresh lock another hook "holds"
+    env = {"SENTINEL_HOME": str(tmp_path), "SentinelDummy": "1", "SENTINEL_LOG_LOCK_WAIT": "0.2"}
+    r = subprocess.run(  # noqa: S603
+        [sys.executable, str(PATCH / "bash_guard.py")],
+        input=json.dumps(
+            {"tool_name": "Bash", "tool_input": {"command": "curl https://x.invalid"}}
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**env, "SystemRoot": "C:\\Windows"},
+    )
+    assert r.returncode == 2  # still denied
+    assert not (tmp_path / agentlog.LOG_NAME).exists()  # could not be chained...
+    notes = (tmp_path / agentlog.DROPPED_NAME).read_text().splitlines()
+    assert len(notes) == 1 and json.loads(notes[0])["rule"] == "BG-01"  # ...but visibly noted
+    assert "x.invalid" not in notes[0]  # the note carries no target
+    result = agentlog.verify(tmp_path / agentlog.LOG_NAME)
+    assert result.dropped == 1
+
+
+def test_dropped_decisions_surface_in_verify_doctor_and_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from datetime import UTC, datetime
+
+    from sentinel import doctor, runner
+    from sentinel.config import Settings
+
+    home = tmp_path / "home"
+    build_log(home, 2)
+    (home / agentlog.DROPPED_NAME).write_text('{"decision":"deny","rule":"BG-01","time":"t"}\n')
+    assert main(["--home", str(home), "agentlog", "verify"]) == 0  # chain fine, but warns
+    assert "1 decision(s) could not be chained" in capsys.readouterr().err
+    assert doctor.check_agent_log(home).status == "warn"
+    result = runner.run_once(
+        Store(home / "sentinel.db"),
+        home,
+        Settings(),
+        datetime(2026, 10, 27, tzinfo=UTC),
+        scan=False,
+    )
+    assert result["health"]["agentlog"].startswith("error: 1 decision(s)")
+    archive = agentlog.archive_log(Store(home / "sentinel.db"), home, "2026-10-27T12:00:00Z", "x")
+    assert archive is not None and not (home / agentlog.DROPPED_NAME).exists()
+
+
+# regression: tests must never write into the user's REAL decision log ----------------------------
+def test_s11_scenario_tests_use_a_throwaway_state_dir(tmp_path: Path) -> None:
+    """Bug found 2026-10-27: the S11 tests ran the live hooks with no SENTINEL_HOME, so every pytest
+    run appended ~50 fake denials to the real log. They must use their own temp directory."""
+    real_home = ROOT / ".sentinel"
+    test_home = Path(S11.hook_env()["SENTINEL_HOME"])
+    assert test_home != real_home and real_home not in test_home.parents
+    assert S11.bash("curl https://example.invalid").returncode == 2
+    assert (test_home / agentlog.LOG_NAME).exists()  # the denial landed in the throwaway dir
+
+
+# human-only archive of the log ---------------------------------------------------------------------
+def test_archive_starts_a_fresh_chain_and_keeps_the_old_one(tmp_path: Path) -> None:
+    log = build_log(tmp_path)
+    store = Store(tmp_path / "sentinel.db")
+    assert agentlog.verify_with_anchor(store, log).ok  # anchor set
+    archive = agentlog.archive_log(store, tmp_path, "2026-10-27T12:00:00Z", "test pollution")
+    assert archive is not None and archive.exists() and not log.exists()
+    assert store.get_doc("snapshots", "agentlog:anchor") is None
+    assert agentlog.verify(archive).ok  # the archive is still a valid chain
+    assert agentlog.verify_with_anchor(store, log).ok  # no log, no anchor: nothing wrong
+    assert bash("curl https://example.invalid/new", tmp_path).returncode == 2
+    fresh = agentlog.verify(log)
+    assert fresh.ok and fresh.entries == 1 and fresh.last_seq == 1  # a new chain from seq 1
+    entry = store.audit()[-1]
+    assert entry["action"] == "agentlog_archived" and entry["entries"] == 5
+
+
+def test_archive_with_nothing_to_archive(tmp_path: Path) -> None:
+    assert (
+        agentlog.archive_log(Store(tmp_path / "s.db"), tmp_path, "2026-10-27T12:00:00Z", "x")
+        is None
+    )
+
+
+def test_cli_reset_refuses_without_a_terminal(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An agent runs commands without a TTY, so it cannot use reset to erase its own trail."""
+    home = tmp_path / "home"
+    log = build_log(home)
+    assert main(["--home", str(home), "agentlog", "reset", "--reason", "x"]) == 1
+    assert "interactive terminal" in capsys.readouterr().err
+    assert log.exists()  # untouched
+
+
+def test_cli_reset_with_a_terminal_needs_the_typed_confirmation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    log = build_log(home)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "nope")
+    assert main(["--home", str(home), "agentlog", "reset", "--reason", "x"]) == 1
+    assert log.exists()
+    monkeypatch.setattr("builtins.input", lambda prompt="": "RESET")
+    assert main(["--home", str(home), "agentlog", "reset", "--reason", "polluted by tests"]) == 0
+    assert not log.exists() and list(home.glob("agent-decisions.*.archive.jsonl"))
+    assert (
+        main(["--home", str(home), "agentlog", "reset", "--reason", "  "]) == 1
+    )  # reason required
 
 
 # CLI, doctor, runner ----------------------------------------------------------------------------

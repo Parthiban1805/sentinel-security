@@ -4,13 +4,24 @@ Feeds PreToolUse JSON to the real hook scripts. No network, no real secrets, not
 """
 
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
 HOOKS = Path(__file__).resolve().parents[2] / ".claude" / "hooks"
+
+# The hooks append every denial to the tamper-evident decision log in $SENTINEL_HOME. These tests
+# run the REAL hooks, so they MUST use a throwaway state dir: otherwise every test run would write
+# dozens of fake denials into the user's real decision log (a bug found on 2026-10-27).
+_TEST_HOME = tempfile.mkdtemp(prefix="sentinel-s11-test-")
+
+
+def hook_env() -> dict[str, str]:
+    return {**os.environ, "SENTINEL_HOME": _TEST_HOME}
 
 
 def run_hook(script: str, payload: dict) -> subprocess.CompletedProcess:
@@ -20,6 +31,7 @@ def run_hook(script: str, payload: dict) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
         check=False,
+        env=hook_env(),
     )
 
 
@@ -119,6 +131,7 @@ def test_hooks_do_not_break_on_malformed_input():
             input="not json",
             capture_output=True,
             text=True,
+            env=hook_env(),
             check=False,
         )
         assert r.returncode == 0

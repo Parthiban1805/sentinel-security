@@ -24,6 +24,30 @@ def exposure(cred_ref: str, asset_id: str, now: datetime) -> list[dict[str, Any]
     ]
 
 
+def exposed_path(asset_id: str, now: datetime) -> list[dict[str, Any]]:
+    """R10 (S1): a probe found an env-file shape served by our own host."""
+    return [
+        make_event(
+            event_type="exposed_service",
+            source="exposure_probe",
+            asset_id=asset_id,
+            time=now,
+            severity="critical",
+            confidence="high",
+            evidence_ref="simulated/probe",
+            is_test=True,
+            attributes={
+                "base_url": "https://host.invalid",
+                "path": "/.env",
+                "probe": "X01",
+                "signature": "env file",
+                "scenario": "S1",
+                "status": 200,
+            },
+        )
+    ]
+
+
 def risky_workflow_change(asset_id: str, now: datetime) -> list[dict[str, Any]]:
     """R2: a workflow change adds a network call, by an actor outside the usual maintainers."""
     return [

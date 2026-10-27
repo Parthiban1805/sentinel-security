@@ -14,5 +14,14 @@ projects = ["my-demo-project"]
 usage_multiple = 3.0      # usage anomaly when volume > max(multiple * 7-day mean, floor)
 usage_floor = 50
 
+# Exposure probes (S1/S15): checks YOUR hosts for served .env/.git/backup files. Nothing is contacted
+# unless you list a host here AND confirm you own it. Content is never stored. See ADR-0008.
+# [probes]
+# interval_hours = 24
+# [[probes.hosts]]
+# url = "https://example.com"      # bare host only (no path)
+# confirm_ownership = true         # required: you own or run this host
+# allow_http = false               # set true only for a plain-http staging host
+
 [alerts]
 toast = true              # Windows notification for new real high/critical incidents

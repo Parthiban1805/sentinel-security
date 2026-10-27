@@ -26,7 +26,10 @@ _CRED = make_cred_ref("ab" * 8)
 
 # Steps whose verification Sentinel performs itself (fresh provider evidence). Everything else is a
 # recorded human attestation.
-AUTO_VERIFIED_STEPS = {"revoke_credential": "Google API key status (verify-key)"}
+AUTO_VERIFIED_STEPS = {
+    "revoke_credential": "Google API key status (verify-key)",
+    "verify_path_closed": "re-probe of the exposed path (verify-probe)",
+}
 
 # Which event types have a real producer today, which are simulation-only, and the rest have none.
 REAL_PRODUCERS = {
@@ -38,6 +41,7 @@ REAL_PRODUCERS = {
     "release_published": "github collector",
     "config_drift": "hygiene checks (sentinel hygiene)",
     "dependency_added": "dependency snapshots (sentinel run)",
+    "exposed_service": "exposure probes (sentinel probe)",
 }
 SIMULATION_ONLY = {
     "login_anomaly": "no login-history API for personal GitHub accounts",
@@ -65,6 +69,14 @@ SCENARIOS: tuple[Scenario, ...] = (
         + scenarios.provider_usage(_CRED, "gcp-demo", NOW),
         ("scan:", "gcp:"),
         "needs a scan AND a live Google usage source (not run live yet)",
+    ),
+    Scenario(
+        "S1/S15",
+        "Sensitive file served by our own host",
+        "R10",
+        lambda: scenarios.exposed_path("host-demo", NOW),
+        ("probes:",),
+        "needs hosts listed under [probes] in the config (owner-confirmed)",
     ),
     Scenario(
         "S8/S10",

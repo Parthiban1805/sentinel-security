@@ -14,6 +14,7 @@ from typing import Any
 
 GENESIS = "0" * 64
 LOG_NAME = "agent-decisions.jsonl"
+DROPPED_NAME = "agent-decisions.dropped"
 _ENTRY_KEYS = (
     "v",
     "seq",
@@ -43,6 +44,36 @@ class VerifyResult:
     last_hash: str = GENESIS
     problems: list[str] = field(default_factory=list)
     records: list[dict[str, Any]] = field(default_factory=list)
+    dropped: int = 0  # decisions the hooks could not chain (lock contention or write error)
+
+
+def archive_log(store: Any, home: Path, now: str, reason: str) -> Path | None:
+    """Move the log aside (kept for forensics) and clear the anchor; audited. Human-run only.
+
+    This is the one sanctioned way to start a fresh chain. The CLI refuses to run it without an
+    interactive terminal so an agent cannot use it to erase its own trail.
+    """
+    log = home / LOG_NAME
+    if not log.exists():
+        return None
+    stamp = now.replace(":", "").replace("-", "")
+    target = home / f"agent-decisions.{stamp}.archive.jsonl"
+    log.replace(target)
+    dropped = home / DROPPED_NAME
+    if dropped.exists():
+        dropped.replace(home / f"agent-decisions.{stamp}.archive.dropped")
+    store.delete_doc("snapshots", "agentlog:anchor")
+    entries = sum(1 for line in target.read_text(encoding="utf-8").splitlines() if line.strip())
+    store.add_audit(
+        now,
+        {
+            "action": "agentlog_archived",
+            "archive": target.name,
+            "entries": entries,
+            "reason": reason,
+        },
+    )
+    return target
 
 
 def verify_with_anchor(store: Any, path: Path, *, advance: bool = True) -> VerifyResult:
@@ -59,6 +90,13 @@ def verify_with_anchor(store: Any, path: Path, *, advance: bool = True) -> Verif
 def verify(path: Path, anchor: dict[str, Any] | None = None) -> VerifyResult:
     """Check the whole chain; `anchor` ({"seq", "hash"}) catches rewritten history or truncation."""
     result = VerifyResult(ok=True)
+    dropped_file = path.parent / DROPPED_NAME
+    if dropped_file.exists():
+        result.dropped = sum(
+            1
+            for line in dropped_file.read_text(encoding="utf-8", errors="ignore").splitlines()
+            if line.strip()
+        )
     if not path.exists():
         result.ok = anchor is None
         if anchor is not None:

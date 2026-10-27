@@ -18,6 +18,8 @@ from sentinel import (
     doctor,
     findings,
     hygiene,
+    onboarding,
+    probes,
     runner,
 )
 from sentinel.events.schema import SchemaError, format_time
@@ -282,10 +284,31 @@ def cmd_agentlog_verify(args: argparse.Namespace) -> int:
     if result.ok:
         denies = sum(r["decision"] == "deny" for r in result.records)
         print(f"chain OK: {result.entries} entries ({denies} denials), last seq {result.last_seq}")
+        if result.dropped:
+            print(
+                f"WARNING: {result.dropped} decision(s) could not be chained (lock contention or "
+                "write error): the log may be incomplete",
+                file=sys.stderr,
+            )
         return 0
     for problem in result.problems:
         print(f"TAMPER/ERROR: {problem}", file=sys.stderr)
     return 1
+
+
+def cmd_agentlog_reset(args: argparse.Namespace) -> int:
+    if not sys.stdin.isatty():
+        raise ValueError("agentlog reset needs a human at an interactive terminal (refusing)")
+    reason = args.reason.strip()
+    if not reason:
+        raise ValueError("a reason is required")
+    answer = input(f"Archive the log and start a new chain? ({reason!r}) Type RESET to confirm: ")
+    if answer.strip() != "RESET":
+        print("cancelled")
+        return 1
+    target = agentlog.archive_log(_store(args), _home(args), format_time(_now()), reason)
+    print(f"archived to {target}" if target else "no log to archive")
+    return 0
 
 
 def cmd_coverage(args: argparse.Namespace) -> int:
@@ -314,6 +337,95 @@ def cmd_coverage(args: argparse.Namespace) -> int:
             print(f"REGRESSION {line}", file=sys.stderr)
         return 1 if bad else 0
     return 0
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    interactive = sys.stdin.isatty() and not args.no_prompt
+
+    def ask(question: str, default: str) -> str:
+        suffix = f" [{default}]" if default else ""
+        return input(f"{question}{suffix}: ").strip() or default
+
+    opts = onboarding.InitOptions(
+        config_path=Path(args.config),
+        home=_home(args),
+        root=Path.cwd(),
+        scan_paths=list(args.scan_path or []),
+        github_repos=list(args.github_repo or []),
+        user_keys=True if args.watch_ssh_keys else (False if args.no_ssh_keys else None),
+        gcp_projects=list(args.gcp_project or []),
+        interactive=interactive,
+        force=args.force,
+        gitignore=not args.no_gitignore,
+        store_token=interactive and not args.no_token_prompt,
+    )
+    return onboarding.run_init(opts, print, ask, lambda q: getpass.getpass(f"{q}: "))
+
+
+def cmd_probe(args: argparse.Namespace) -> int:
+    """Probe hosts YOU own for exposed sensitive files (read-only; content is never kept)."""
+    settings = config.load(Path(args.config))
+    targets: list[tuple[str, bool]] = []
+    if args.url:
+        if not args.i_own_this:
+            raise ValueError("probing needs --i-own-this: only probe hosts you own or run")
+        targets += [
+            (probes.normalize_target(u, allow_http=args.allow_http), args.allow_http)
+            for u in args.url
+        ]
+    else:
+        targets += [(h.base_url, h.allow_http) for h in settings.probe_hosts]
+    if not targets:
+        raise ValueError(
+            "no hosts: pass --url ... --i-own-this, or list hosts under [probes] in the config"
+        )
+    store = _store(args) if args.record else None
+    now = _now()
+    worst = -1
+    for base, allow_http in targets:
+        fetch = probes.make_fetcher(allow_http)
+        if store is not None:
+            events, cleared, reachable, snapshot = probes.collect(
+                store, base, now, fetch, pause=args.pause
+            )
+            exposures = [{**e["attributes"], "severity": e["severity"]} for e in events]
+            stored = sum(store.add_event(e) for e in events)
+            store.put_doc("snapshots", probes.snapshot_key(base), snapshot)
+            print(f"recorded {stored} new exposed_service event(s)", file=sys.stderr)
+            for path in cleared:
+                print(f"CLEARED {base}{path} no longer served", file=sys.stderr)
+        else:
+            found, reachable = probes.probe_host(base, fetch, pause=args.pause)
+            exposures = [
+                {
+                    "path": e.path,
+                    "signature": e.signature,
+                    "severity": e.severity,
+                    "status": e.status,
+                    "scenario": e.scenario,
+                }
+                for e in found
+            ]
+        print(
+            f"== {base}: {len(exposures)} exposed path(s)"
+            + ("" if reachable else " (host did not answer)")
+        )
+        for e in exposures:
+            label = str(e["severity"]).upper()
+            print(f"  [{label:<8}] {e['path']}: {e['signature']} served (HTTP {e['status']})")
+            worst = max(worst, ("medium", "high", "critical").index(e["severity"]))
+    threshold = ("medium", "high", "critical").index(args.fail_on) if args.fail_on else None
+    return 1 if threshold is not None and worst >= threshold else 0
+
+
+def cmd_incident_verify_probe(args: argparse.Namespace) -> int:
+    # The target was validated (https, or http only with allow_http) when it was first probed;
+    # re-probing the recorded base URL needs no new policy decision.
+    fetch = probes.make_fetcher(allow_http=True)
+    passed, evidence = runner.verify_probe(_store(args), args.id, args.actor, _now(), fetch)
+    print(f"{args.id}: verify_path_closed {'VERIFIED' if passed else 'verification FAILED'}")
+    print(f"  evidence: {evidence}")
+    return 0 if passed else 1
 
 
 def cmd_hygiene(args: argparse.Namespace) -> int:
@@ -458,12 +570,40 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p = add(ag, "verify", cmd_agentlog_verify, help="verify the tamper-evident hook decision log")
     p.add_argument("--file", help="log path (default: <home>/agent-decisions.jsonl)")
+    p = add(
+        ag, "reset", cmd_agentlog_reset, help="archive the log and start a new chain (human only)"
+    )
+    p.add_argument("--reason", required=True, help="why (recorded in the audit trail)")
 
     p = add(sub, "coverage", cmd_coverage, help="scenario coverage: simulated logic vs live")
     p.add_argument("--json", action="store_true")
     p.add_argument("--baseline", default="docs/coverage-baseline.json")
     p.add_argument("--check", action="store_true", help="exit 1 if a verified rule regressed")
     p.add_argument("--update-baseline", action="store_true")
+
+    p = add(
+        sub, "init", cmd_init, help="guided first-time setup (config, state dir, token, .gitignore)"
+    )
+    p.add_argument("--config", default="sentinel.toml")
+    p.add_argument("--scan-path", action="append", help="folder to scan (repeatable)")
+    p.add_argument("--github-repo", action="append", help="owner/name to watch (repeatable)")
+    p.add_argument("--gcp-project", action="append", help="Google Cloud project id (repeatable)")
+    group = p.add_mutually_exclusive_group()
+    group.add_argument("--watch-ssh-keys", action="store_true")
+    group.add_argument("--no-ssh-keys", action="store_true")
+    p.add_argument("--no-prompt", action="store_true", help="never ask questions")
+    p.add_argument("--no-token-prompt", action="store_true", help="do not ask for a GitHub token")
+    p.add_argument("--no-gitignore", action="store_true", help="do not edit .gitignore")
+    p.add_argument("--force", action="store_true", help="replace an existing config (keeps a .bak)")
+
+    p = add(sub, "probe", cmd_probe, help="check YOUR hosts for exposed .env/.git/backup files")
+    p.add_argument("--config", default="sentinel.toml")
+    p.add_argument("--url", action="append", help="host base URL, e.g. https://example.com")
+    p.add_argument("--i-own-this", action="store_true", help="confirm you own or run the host")
+    p.add_argument("--allow-http", action="store_true", help="allow plain http targets")
+    p.add_argument("--record", action="store_true", help="store findings as exposed_service events")
+    p.add_argument("--pause", type=float, default=0.25, help="seconds between requests")
+    p.add_argument("--fail-on", choices=["medium", "high", "critical"])
 
     p = add(sub, "hygiene", cmd_hygiene, help="repo checks: tracked secrets, .gitignore, CI policy")
     p.add_argument("paths", nargs="*", help="repos to check (default: scan paths from the config)")
@@ -511,6 +651,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--evidence", required=True)
     p.add_argument("--fail", action="store_true", help="verification did NOT pass")
     p = add(inc, "verify-key", cmd_incident_verify_key, help="verify revocation from Google Cloud")
+    p.add_argument("id")
+    p.add_argument("--actor", required=True)
+    p = add(inc, "verify-probe", cmd_incident_verify_probe, help="re-probe an exposed path (R10)")
     p.add_argument("id")
     p.add_argument("--actor", required=True)
     p = add(inc, "close", cmd_incident_close)

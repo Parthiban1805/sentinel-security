@@ -129,6 +129,13 @@ def check_agent_log(home: Path) -> Check:
     if not result.ok:
         return Check("agent log", "fail", "chain broken: " + "; ".join(result.problems[:2]))
     note = "" if anchor else " (no anchor yet: run `sentinel agentlog verify`)"
+    if result.dropped:
+        return Check(
+            "agent log",
+            "warn",
+            f"{result.entries} entries, chain intact, but {result.dropped} decision(s) "
+            "could not be chained",
+        )
     return Check("agent log", "ok", f"{result.entries} entries, chain intact{note}")
 
 

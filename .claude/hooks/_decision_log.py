@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 
 GENESIS = "0" * 64
 LOG_NAME = "agent-decisions.jsonl"
+DROPPED_NAME = "agent-decisions.dropped"
 _LOCK_NAME = "agent-decisions.lock"
 _TAIL_BYTES = 65536
 
@@ -70,8 +71,37 @@ def target_fingerprint(base, text):
     return hmac.new(key, text.encode("utf-8", errors="ignore"), hashlib.sha256).hexdigest()[:16]
 
 
-def _acquire(lock_path, wait=2.0):
-    deadline = time.time() + wait
+def _lock_wait():
+    try:
+        return float(os.environ.get("SENTINEL_LOG_LOCK_WAIT", "5"))
+    except ValueError:
+        return 5.0
+
+
+def _note_dropped(base, decision, rule):
+    """A decision that could not be chained must leave a visible trace (never a silent drop).
+
+    One small O_APPEND line per drop (no target, no secrets); `sentinel agentlog verify` counts them.
+    """
+    try:
+        os.makedirs(base, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        line = (
+            json.dumps({"time": stamp, "decision": decision, "rule": rule}, sort_keys=True) + "\n"
+        )
+        fd = os.open(
+            os.path.join(base, DROPPED_NAME), os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600
+        )
+        try:
+            os.write(fd, line.encode("utf-8"))
+        finally:
+            os.close(fd)
+    except Exception:  # noqa: BLE001 - nothing more we can do; never affect a decision
+        pass
+
+
+def _acquire(lock_path, wait=None):
+    deadline = time.time() + (_lock_wait() if wait is None else wait)
     while True:
         try:
             fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -99,6 +129,7 @@ def record(decision, tool, rule, target_class, target_text="", session_id=""):
         log_path = os.path.join(base, LOG_NAME)
         lock_path = os.path.join(base, _LOCK_NAME)
         if not _acquire(lock_path):
+            _note_dropped(base, decision, rule)
             return False
         try:
             seq, prev = _last_state(log_path)
@@ -131,4 +162,5 @@ def record(decision, tool, rule, target_class, target_text="", session_id=""):
             except OSError:
                 pass
     except Exception:  # noqa: BLE001 - logging must never affect a decision
+        _note_dropped(home(), decision, rule)
         return False

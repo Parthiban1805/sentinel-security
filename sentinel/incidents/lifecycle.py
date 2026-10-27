@@ -17,6 +17,22 @@ from sentinel.inventory.blast import blast_radius
 from sentinel.redaction import check_free_text
 from sentinel.store.db import Store
 
+# What we do NOT know, per rule (credential rules fall back to the provider-activity unknown).
+_UNKNOWNS: dict[str, tuple[str, ...]] = {
+    "R10": (
+        "Whether anyone fetched the exposed file during the exposure window (server access logs).",
+        "Which credentials or data the file contains and whether any were already used.",
+    ),
+    "R2": (
+        "What the workflow change actually does when it runs (the diff content is not stored).",
+        "Whether the actor is a legitimate new contributor.",
+    ),
+    "R8": ("Whether the release was built by the modified pipeline or by an earlier run.",),
+    "R4": ("Whether the volume comes from credential abuse or from legitimate load.",),
+    "R6": ("Whether the session was stolen or the user changed device or location.",),
+    "R7": ("Where the decoy was read and by whom.",),
+}
+
 
 class IncidentError(ValueError):
     """Invalid lifecycle transition (message names the rule that was violated)."""
@@ -74,7 +90,12 @@ def _build(
     risk: dict[str, Any],
     now: datetime,
 ) -> dict[str, Any]:
-    unknowns = ["Whether the provider shows other activity outside the correlated events."]
+    unknowns = list(
+        _UNKNOWNS.get(
+            match.rule_id,
+            ("Whether the provider shows other activity outside the correlated events.",),
+        )
+    )
     if blast is not None and blast["unlinked"]:
         unknowns.append("Credential is not linked to any asset: blast radius is unknown.")
     return {

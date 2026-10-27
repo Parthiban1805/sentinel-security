@@ -113,8 +113,12 @@ W6 script injection. Findings become `config_drift` events (idempotent), `sentin
 and unignored repomix dumps. **Dependency checks (S7) built:** D1 typosquat (hypothesis), D2 unpinned (only without a lockfile), D3 no lockfile, D4 install
 scripts, D5 URL, git or custom-index dependencies, plus `dependency_added` events from snapshot diffs (284 tests); doc
 `docs/scenarios/S7-typosquatted-package.md`. A first real run produced noise (every npm project flagged for ranges), which was
-fixed by trusting lockfiles. **Still to build:** canaries, exposure probes (S1, S15), GitHub protection audit, the
-`sentinel init` wizard, and rule R3 (needs endpoint telemetry).
+fixed by trusting lockfiles. **`sentinel init` built** (guided setup: config, state dir, GitHub repo detection, hidden token prompt, `.gitignore`, health check;
+repo and project names validated). **Exposure probes (S1, S15) built:** `sentinel probe` checks owner-confirmed hosts for served
+`.env`, `.git`, SQL dumps, archives and key files by file SHAPE (never storing content), rule R10, and the first automatic
+verifier that is not Google-specific (`incident verify-probe` re-probes the path; a network error fails the step). ADR-0008, scenario
+doc `S1-exposed-sensitive-path.md`. Real exposure on a real host not yet exercised. **Still to build:** canaries, GitHub
+protection audit, and rule R3 (needs endpoint telemetry).
 - `sentinel hygiene`: tracked `.env`, missing `.gitignore` entries, missing pre-commit hook, dump files.
 - Workflow policy checks (S8, S9, S10): unpinned actions, `pull_request_target` on untrusted code, broad permissions;
   extend R2. Dependency checks (S7): new dependency, typosquat heuristics, install scripts, lockfile pinning

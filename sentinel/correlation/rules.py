@@ -178,6 +178,42 @@ def r7_canary(events: list[Event], ctx: Context) -> list[Match]:
     ]
 
 
+def r10_exposed_sensitive_path(events: list[Event], ctx: Context) -> list[Match]:
+    """A sensitive file is reachable on one of our own hosts (exposure probes, S1/S15)."""
+    matches: list[Match] = []
+    for e in events:
+        if e["event_type"] != "exposed_service":
+            continue
+        attrs = e.get("attributes") or {}
+        path = attrs.get("path", "?")
+        shape = str(attrs.get("signature", "sensitive file"))
+        article = "an" if shape[:1].lower() in "aeiou" else "a"
+        matches.append(
+            Match(
+                rule_id="R10",
+                key=f"R10:{e['asset_id']}:{path}",
+                title=f"{attrs.get('signature', 'file')} is served at {path} on {e['asset_id']}",
+                severity_floor=e["severity"] if e["severity"] in ("high", "critical") else "high",
+                confidence="high",
+                facts=(
+                    f"At {e['time']} a probe received HTTP {attrs.get('status', '?')} for {path} "
+                    f"and the first bytes matched the shape of {article} {shape}; "
+                    "no authentication was involved.",
+                ),
+                hypotheses=(
+                    "The contents may already have been fetched by others. Whether any credential "
+                    "inside was used is unknown (provider usage evidence, rule R1, would show it).",
+                ),
+                event_ids=(e["event_id"],),
+                asset_id=e["asset_id"],
+                first_time=e["time"],
+                last_time=e["time"],
+                is_test=e["is_test"],
+            )
+        )
+    return matches
+
+
 def r2_risky_workflow_change(events: list[Event], ctx: Context) -> list[Match]:
     """Workflow change adding network calls or secret refs, by a non-maintainer."""
     matches: list[Match] = []

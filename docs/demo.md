@@ -32,11 +32,15 @@ Sentinel recommends; it never executes real response actions in v0.1 (the adapte
 ## v0.2: real signals and continuous operation
 
 Setup (all done by you, never by the agent):
-1. `copy sentinel.example.toml sentinel.toml` and edit repos, GitHub repos and GCP projects (no secrets in it).
-2. GitHub: create a fine-grained, read-only token (repository Contents + Metadata read for the watched repos,
-   and read access to your SSH keys). Set it as a user env var `SENTINEL_GITHUB_TOKEN`.
-3. Google Cloud: `gcloud auth application-default login` with a principal that can only read monitoring and
-   list API keys (`apikeys.keys.list`, `monitoring.timeSeries.list`).
+1. Run the guided setup: `uv run sentinel init`. It asks which folders to scan, detects your GitHub repositories from Git
+   remotes, writes `sentinel.toml`, creates the state folder and key, adds `.sentinel/` and `sentinel.toml` to `.gitignore`,
+   and runs the health checks. Non-interactive form: `uv run sentinel init --no-prompt --scan-path <repo>`.
+2. GitHub: create a fine-grained, read-only token (Contents + Metadata read for the watched repos; Git SSH keys read if you
+   watch your SSH keys). `init` reads it from a hidden prompt and saves it with restricted permissions; it is never shown.
+   Or set env `SENTINEL_GITHUB_TOKEN`, or put it in `.sentinel/github-token.txt` yourself.
+3. Google Cloud (optional): `gcloud auth application-default login` with a principal that can only read monitoring and
+   list API keys (`apikeys.keys.list`, `monitoring.timeSeries.list`), then `sentinel init --force --gcp-project <id>`.
+4. Check anything at any time: `uv run sentinel doctor`.
 
 ```
 uv run sentinel run                     # scan + collect + correlate + alert, prints collector health

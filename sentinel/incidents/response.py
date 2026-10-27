@@ -105,6 +105,32 @@ _PLANS: dict[str, tuple[_Step, ...]] = {
             False,
         ),
     ),
+    "R10": (
+        (
+            "block_path",
+            "Remove the file from the web root or block the path in the server config",
+            "approval_required",
+            True,
+        ),
+        (
+            "rotate_exposed_secrets",
+            "Rotate every credential that could be inside the exposed file",
+            "approval_required",
+            True,
+        ),
+        (
+            "review_access_logs",
+            "Review server access logs for who fetched the path during the exposure window",
+            "investigate_first",
+            True,
+        ),
+        (
+            "verify_path_closed",
+            "Re-probe the path: it must no longer serve the file (verified by the system)",
+            "investigate_first",
+            True,
+        ),
+    ),
     "R8": (
         (
             "review_release_provenance",

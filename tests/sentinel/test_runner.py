@@ -179,13 +179,13 @@ def test_verify_key_passes_when_deleted(tmp_path: Path) -> None:
 def test_config_loader(tmp_path: Path) -> None:
     cfg = tmp_path / "sentinel.toml"
     cfg.write_text(
-        '[github]\nrepos = ["o/r"]\nuser_keys = true\n[gcp]\nprojects = ["p"]\nusage_floor = 10\n'
+        '[github]\nrepos = ["o/r"]\nuser_keys = true\n[gcp]\nprojects = ["demo-project"]\nusage_floor = 10\n'
     )
     s = load(cfg)
     assert (
         s.github_repos == ("o/r",)
         and s.github_user_keys
-        and s.gcp_projects == ("p",)
+        and s.gcp_projects == ("demo-project",)
         and s.usage_floor == 10
     )
     assert load(tmp_path / "absent.toml") == Settings()

@@ -31,6 +31,15 @@ merged settings, validates the JSON (and restores the backup if invalid), and pr
    `uv run sentinel agentlog verify`. It should report entries and `chain OK`.
 5. `uv run sentinel doctor` now includes an agent-log check.
 
+## Updates to the patch (re-run `apply-patch.bat` after pulling them)
+- 2026-10-27: a decision that cannot be chained (another hook holds the lock for more than 5 s, or a write fails) is no longer
+  dropped silently: it leaves a one-line note in `.sentinel/agent-decisions.dropped`, and `sentinel agentlog verify`, `doctor` and
+  `sentinel run` report the count. `SENTINEL_LOG_LOCK_WAIT` (seconds) tunes the wait.
+- Tests that run the real hooks now use a throwaway state dir. Before this fix every `pytest` run wrote about 50 fake denials into
+  the real log. To archive an already-polluted log, run in an interactive terminal:
+  `uv run sentinel agentlog reset --reason "polluted by test runs"` and type RESET. The old log is kept as
+  `agent-decisions.<time>.archive.jsonl`; the command refuses to run without a terminal, so an agent cannot use it.
+
 ## Roll back
 Restore the two original hook files from Git (`git checkout -- .claude/hooks`) and remove the added settings entries.
 

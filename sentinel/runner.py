@@ -10,8 +10,8 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-from sentinel import agentlog, alerts, dependencies, findings, hygiene
-from sentinel.config import Settings
+from sentinel import agentlog, alerts, dependencies, findings, hygiene, probes
+from sentinel.config import ProbeHost, Settings
 from sentinel.events.schema import format_time
 from sentinel.incidents import lifecycle
 from sentinel.inventory.assets import asset_id_for
@@ -47,6 +47,8 @@ def run_once(
     gcp_tokens: Callable[[], TokenProvider] = AdcTokenProvider,
     toast: Callable[[str, str], bool] = alerts.toast,
     scan: bool = True,
+    probe_fetch: probes.FetchFn | None = None,
+    probe_pause: float = 0.25,
 ) -> dict[str, Any]:
     key = load_key(home)
     http = client or HttpClient()
@@ -124,6 +126,28 @@ def run_once(
             for repo in settings.github_repos:
                 guard(f"github:{repo}", partial(collect_repo, repo))
 
+    for host in settings.probe_hosts:  # exposure probes (S1/S15): only hosts the owner confirmed
+
+        def probe_one(host: ProbeHost = host) -> int:
+            if not probes.due(store, host.base_url, now, settings.probe_interval_hours):
+                return 0
+            fetch = probe_fetch or probes.make_fetcher(host.allow_http)
+            events, cleared, reachable, snapshot = probes.collect(
+                store, host.base_url, now, fetch, pause=probe_pause
+            )
+            stored_count = add(events)
+            store.put_doc("snapshots", probes.snapshot_key(host.base_url), snapshot)
+            for path in cleared:
+                store.add_audit(
+                    format_time(now),
+                    {"action": "exposure_cleared", "host": host.base_url, "path": path},
+                )
+            if not reachable:
+                raise ValueError("host did not answer any probe")
+            return stored_count
+
+        guard(f"probes:{probes.host_label(host.base_url)}", probe_one)
+
     if settings.gcp_projects:
         try:
             gcp = GcpCollector(http, gcp_tokens())
@@ -163,6 +187,10 @@ def run_once(
                 line = f"{format_time(now)} CRITICAL agent decision log failed verification"
                 (home / "alerts.log").open("a", encoding="utf-8").write(line + "\n")
                 raise ValueError("; ".join(result.problems[:3]))
+            if result.dropped:
+                raise ValueError(
+                    f"{result.dropped} decision(s) could not be chained (log may be incomplete)"
+                )
             return 0
 
         guard("agentlog", check_agent_log)
@@ -215,4 +243,38 @@ def verify_key(
         results.append(f"gcp {alias['project']} key uid {alias['uid']}: {state}")
     evidence = f"apikeys.list (showDeleted) at {format_time(now)}: " + "; ".join(results)
     lifecycle.verify(store, iid, "revoke_credential", actor, now, passed=passed, evidence=evidence)
+    return passed, evidence
+
+
+def verify_probe(
+    store: Store, iid: str, actor: str, now: datetime, fetch: probes.FetchFn
+) -> tuple[bool, str]:
+    """Verify `verify_path_closed` by re-probing the exposed path (fresh, read-only evidence).
+
+    Passes only on a definitive answer without the file. A network error proves nothing."""
+    incident = store.get_doc("incidents", iid)
+    if incident is None:
+        raise KeyError(f"unknown incident: {iid}")
+    if incident["rule_id"] != "R10":
+        raise ValueError("verify-probe applies to exposure incidents (rule R10) only")
+    wanted = {t["event_id"] for t in incident["timeline"]}
+    events = [e for e in store.events(event_type="exposed_service") if e["event_id"] in wanted]
+    if not events:
+        raise ValueError("the incident's exposure event was not found")
+    lines = []
+    passed = True
+    for event in events:
+        attrs = event["attributes"]
+        state, status = probes.reprobe(attrs["base_url"], attrs["path"], fetch)
+        ok = state == "clear"
+        passed = passed and ok
+        shown = "no answer (network error)" if status is None else f"HTTP {status}"
+        verdict = {
+            "clear": "no longer served",
+            "exposed": "STILL SERVED",
+            "inconclusive": "inconclusive",
+        }[state]
+        lines.append(f"GET {attrs['base_url']}{attrs['path']} -> {shown}: {verdict}")
+    evidence = f"re-probe at {format_time(now)}: " + "; ".join(lines)
+    lifecycle.verify(store, iid, "verify_path_closed", actor, now, passed=passed, evidence=evidence)
     return passed, evidence
