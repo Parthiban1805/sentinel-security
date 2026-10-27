@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sentinel/event.schema.json#v1",
+  "title": "Sentinel normalized security event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event_id", "event_type", "source", "asset_id", "time", "severity", "confidence", "verified", "evidence_ref", "is_test"],
+  "properties": {
+    "event_id": { "type": "string" },
+    "event_type": {
+      "type": "string",
+      "enum": ["secret_exposure", "credential_usage_anomaly", "login_anomaly", "token_created", "ssh_key_added",
+               "workflow_changed", "release_published", "dependency_added", "egress_anomaly", "agent_tool_denied",
+               "agent_tool_allowed", "canary_triggered", "config_drift", "exposed_service", "spend_anomaly"]
+    },
+    "source": { "type": "string", "examples": ["gitleaks", "github_audit", "provider_usage", "ci", "endpoint", "agent_gateway"] },
+    "asset_id": { "type": "string" },
+    "identity_ref": { "type": ["string", "null"], "pattern": "^(user|bot|svc)-fp-[0-9a-f]{4,}$" },
+    "credential_ref": { "type": ["string", "null"], "pattern": "^cred-fp-[0-9a-f]{4,}$" },
+    "time": { "type": "string", "format": "date-time" },
+    "severity": { "type": "string", "enum": ["info", "low", "medium", "high", "critical"] },
+    "confidence": { "type": "string", "enum": ["low", "medium", "high"] },
+    "verified": { "type": "boolean" },
+    "evidence_ref": { "type": "string" },
+    "is_test": { "type": "boolean" },
+    "attributes": { "type": "object", "description": "Source-specific, redacted, minimal fields" }
+  }
+}

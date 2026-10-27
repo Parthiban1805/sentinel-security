@@ -1,0 +1,35 @@
+# Secrets and local config
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials*.json
+service-account*.json
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+
+# Reports may contain finding metadata; keep them out of Git
+reports/
+*.sarif
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

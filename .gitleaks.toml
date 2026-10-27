@@ -1,0 +1,16 @@
+# Gitleaks configuration: extends the built-in ruleset.
+title = "sentinel gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Narrow, justified exceptions only. Every entry needs a reason."
+paths = [
+  '''docs/schemas/.*\.json''',
+  '''\.env\.example''',
+]
+# Lines explicitly marked as runtime-generated fake canaries for tests
+regexes = [
+  '''sentinel:allow-fake-secret''',
+]
