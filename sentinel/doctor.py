@@ -94,9 +94,11 @@ def check_github_token(home: Path, settings: config.Settings) -> Check:
     if not (settings.github_repos or settings.github_user_keys):
         return Check("github token", "ok", "GitHub not configured")
     try:
-        token = runner.github_token(home)
+        token, _source, shadowed = runner.github_token_source(home)
     except (OSError, UnicodeDecodeError) as exc:
         return Check("github token", "fail", f"token file unreadable ({type(exc).__name__})")
+    if shadowed:
+        return Check("github token", "warn", runner.SHADOW_WARNING)
     if not token:
         return Check(
             "github token",

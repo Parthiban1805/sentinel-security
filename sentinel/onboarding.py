@@ -212,6 +212,8 @@ def run_init(
                 out(f"error: {exc}; token NOT saved")
             else:
                 out(f"token saved to {path} (restricted permissions)")
+                if runner.github_token_source(opts.home)[2]:
+                    out(f"WARNING: {runner.SHADOW_WARNING}")
     elif repos or user_keys:
         token_file = opts.home / runner.GITHUB_TOKEN_FILE
         out(f"GitHub token: set env {runner.GITHUB_TOKEN_ENV}, or save it in {token_file}")

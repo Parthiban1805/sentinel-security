@@ -35,15 +35,32 @@ GITHUB_TOKEN_ENV = "SENTINEL_GITHUB_TOKEN"  # noqa: S105 (env var name, not a se
 GITHUB_TOKEN_FILE = "github-token.txt"  # noqa: S105 (file name inside the git-ignored state dir)
 
 
+SHADOW_WARNING = (
+    f"the environment variable {GITHUB_TOKEN_ENV} overrides the saved token file and they differ: "
+    "an old value in the environment keeps winning. Remove the variable if the file is the right one "
+    f"(this window: set {GITHUB_TOKEN_ENV}=   permanently: reg delete HKCU\\Environment /v "
+    f"{GITHUB_TOKEN_ENV} /f)"
+)
+
+
+def github_token_source(home: Path) -> tuple[str, str, bool]:
+    """(token, source, shadowed). Source is 'environment', 'file' or 'none'.
+
+    `shadowed` is True when both exist, differ, and the environment wins: the usual cause of
+    "I saved a new token but it still fails". Values are compared in memory and never shown."""
+    env = os.environ.get(GITHUB_TOKEN_ENV, "").strip()
+    path = home / GITHUB_TOKEN_FILE
+    saved = path.read_text(encoding="utf-8-sig").strip() if path.exists() else ""
+    if env:
+        return env, "environment", bool(saved) and saved != env
+    if saved:
+        return saved, "file", False
+    return "", "none", False
+
+
 def github_token(home: Path) -> str:
     """Token from the environment, else from <home>/github-token.txt (created by the user)."""
-    token = os.environ.get(GITHUB_TOKEN_ENV, "").strip()
-    if token:
-        return token
-    path = home / GITHUB_TOKEN_FILE
-    if path.exists():
-        return path.read_text(encoding="utf-8-sig").strip()
-    return ""
+    return github_token_source(home)[0]
 
 
 def run_once(
@@ -124,6 +141,8 @@ def run_once(
                     f"skipped: no token (env {GITHUB_TOKEN_ENV} or {home / GITHUB_TOKEN_FILE})"
                 )
         if github_credential:
+            if github_token_source(home)[2]:  # an old environment value shadows the saved file
+                health["github:token-source"] = "warn: " + SHADOW_WARNING
             gh = GitHubCollector(http, github_credential, key)
 
             def collect_keys() -> int:
