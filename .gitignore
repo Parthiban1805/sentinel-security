@@ -33,3 +33,6 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# Sentinel local state (map of secret locations: sensitive)
+.sentinel/

@@ -1,0 +1,47 @@
+[project]
+name = "sentinel"
+version = "0.1.0"
+description = "Internal AI & developer security system: detect, correlate, respond, verify"
+requires-python = ">=3.11"
+dependencies = [
+    "jsonschema==4.23.0",
+]
+
+[project.scripts]
+sentinel = "sentinel.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest==8.3.4",
+    "ruff==0.8.4",
+    "mypy==1.13.0",
+    "types-jsonschema==4.23.0.20241208",
+]
+
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sentinel"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# .claude/hooks are protected guard scripts (not edited by the agent); excluded from lint/format
+extend-exclude = [".claude"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S603", "S607", "E501"]
+"scripts/**" = ["S603", "S607"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"

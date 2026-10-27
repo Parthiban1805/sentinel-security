@@ -3,6 +3,7 @@
 Fake keys are generated at runtime in a temp dir; nothing is committed. Uses gitleaks `dir` mode
 (no Git needed), always redacted.
 """
+
 import json
 import secrets
 import shutil
@@ -26,9 +27,20 @@ def fake_key() -> str:
 
 def scan(path: Path, report: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [str(GITLEAKS), "dir", "--redact", "--no-banner", "--report-format", "json",
-         "--report-path", str(report), str(path)],
-        capture_output=True, text=True, check=False,
+        [
+            str(GITLEAKS),
+            "dir",
+            "--redact",
+            "--no-banner",
+            "--report-format",
+            "json",
+            "--report-path",
+            str(report),
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
     )
 
 
@@ -60,7 +72,10 @@ def test_s2_secret_found_in_non_git_location(tmp_path, name):
     assert all(key not in o for o in outputs), "secret value leaked into output"
 
 
-@pytest.mark.xfail(strict=True, reason="KNOWN GAP: gitleaks misses keys wrapped in JSON-escaped quotes (nested JSON in agent transcripts)")
+@pytest.mark.xfail(
+    strict=True,
+    reason="KNOWN GAP: gitleaks misses keys wrapped in JSON-escaped quotes (nested JSON in agent transcripts)",
+)
 def test_s2_json_escaped_quotes_in_transcript(tmp_path):
     key = fake_key()
     d = tmp_path / "scan"

@@ -3,6 +3,7 @@
 Usage: python scripts/mask_findings.py <repo_path> [<repo_path> ...]
 Needs gitleaks on PATH. Raw values stay in a temp file that is deleted; only masks are printed.
 """
+
 import json
 import subprocess
 import sys
@@ -19,9 +20,19 @@ def main(repos: list[str]) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             report = Path(tmp) / "r.json"
             subprocess.run(
-                ["gitleaks", "git", "--no-banner", "--log-opts=--all", "--report-format", "json",
-                 "--report-path", str(report), repo],
-                capture_output=True, check=False,
+                [
+                    "gitleaks",
+                    "git",
+                    "--no-banner",
+                    "--log-opts=--all",
+                    "--report-format",
+                    "json",
+                    "--report-path",
+                    str(report),
+                    repo,
+                ],
+                capture_output=True,
+                check=False,
             )
             findings = json.loads(report.read_text()) if report.exists() else []
         print(f"\n== {repo}")

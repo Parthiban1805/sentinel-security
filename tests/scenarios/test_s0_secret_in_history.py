@@ -1,4 +1,5 @@
 """S0: key committed then deleted is still found in history. Fake key is generated at runtime."""
+
 import hashlib
 import json
 import secrets
@@ -32,8 +33,17 @@ def run(args, cwd):
 
 def scan(mode, repo, report):
     return run(
-        [str(GITLEAKS), mode, "--redact", "--no-banner", "--report-format", "json",
-         "--report-path", str(report), "."],
+        [
+            str(GITLEAKS),
+            mode,
+            "--redact",
+            "--no-banner",
+            "--report-format",
+            "json",
+            "--report-path",
+            str(report),
+            ".",
+        ],
         repo,
     )
 
@@ -42,8 +52,11 @@ def test_s0_deleted_key_found_in_history(tmp_path):
     key = fake_key()
     repo = tmp_path / "repo"
     repo.mkdir()
-    for cmd in (["git", "init", "-q"], ["git", "config", "user.email", "t@example.invalid"],
-                ["git", "config", "user.name", "sentinel-test"]):
+    for cmd in (
+        ["git", "init", "-q"],
+        ["git", "config", "user.email", "t@example.invalid"],
+        ["git", "config", "user.name", "sentinel-test"],
+    ):
         run(cmd, repo)
     (repo / "config.txt").write_text(f'gemini_api_key = "{key}"\n')
     run(["git", "add", "."], repo)
