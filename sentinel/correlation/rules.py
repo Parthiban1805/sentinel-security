@@ -196,6 +196,49 @@ def r7_canary(events: list[Event], ctx: Context) -> list[Match]:
     return matches
 
 
+def r11_use_after_revocation(events: list[Event], ctx: Context) -> list[Match]:
+    """Provider usage AFTER the revocation was verified: the revocation did not hold."""
+    later: dict[str, list[Event]] = {}
+    for e in events:
+        ref = e.get("credential_ref")
+        verified_at = ctx.revoked_verified_at.get(ref or "")
+        if e["event_type"] != "credential_usage_anomaly" or not ref or not verified_at:
+            continue
+        if _ts(e) > datetime.fromisoformat(verified_at.replace("Z", "+00:00")):
+            later.setdefault(ref, []).append(e)
+    matches: list[Match] = []
+    for ref, used in later.items():
+        used = sorted(used, key=lambda u: (_ts(u), u["event_id"]))
+        verified_at = ctx.revoked_verified_at[ref]
+        dead = any((u.get("attributes") or {}).get("reason") == "use_of_dead_key" for u in used)
+        matches.append(
+            Match(
+                rule_id="R11",
+                key=f"R11:{ref}",
+                title=f"Credential {ref} used after its revocation was verified",
+                severity_floor="critical",
+                confidence="high" if dead else "medium",
+                facts=(
+                    f"The revocation of {ref} was verified at {verified_at}.",
+                    f"Provider usage was reported for the same credential ref {len(used)} time(s) "
+                    f"afterwards, first at {used[0]['time']}.",
+                ),
+                hypotheses=(
+                    "The revocation did not take effect: a different key may have been revoked, "
+                    "another copy of the key exists, or the provider is slow to apply it. The "
+                    "usage may also be provider data that arrived late.",
+                ),
+                event_ids=tuple(u["event_id"] for u in used),
+                asset_id=used[0]["asset_id"],
+                first_time=used[0]["time"],
+                last_time=used[-1]["time"],
+                is_test=_is_test(used),
+                cred_ref=ref,
+            )
+        )
+    return matches
+
+
 def r10_exposed_sensitive_path(events: list[Event], ctx: Context) -> list[Match]:
     """A sensitive file is reachable on one of our own hosts (exposure probes, S1/S15)."""
     matches: list[Match] = []

@@ -16,6 +16,8 @@ class Context:
     """Facts the pure rules may use (loaded by the caller; rules do no I/O)."""
 
     revoked_verified: frozenset[str] = frozenset()
+    # cred_ref -> UTC time ("...Z") the revocation was verified; used by R11.
+    revoked_verified_at: dict[str, str] = field(default_factory=dict)
     config: Config = field(default_factory=Config)
 
 

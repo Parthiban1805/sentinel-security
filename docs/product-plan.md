@@ -4,6 +4,8 @@ Status as of 2026-10-27. Sizes are relative (S = days, M = 1 to 2 weeks, L = sev
 Revised after the plan review: tamper-evident agent telemetry, quieter R5, real verification evidence, honest
 coverage claims, and unfinished foundations first.
 
+> Open owner actions are tracked in [`pending-tasks.md`](pending-tasks.md).
+
 ## 1. The end product
 
 **One line:** a security operations product that every employee system can run, which finds credential, CI and

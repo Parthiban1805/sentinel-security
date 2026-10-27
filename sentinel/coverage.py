@@ -11,18 +11,19 @@ import json
 import tempfile
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from sentinel.events.refs import cred_ref as make_cred_ref
-from sentinel.events.schema import SCHEMA_DIR
+from sentinel.events.schema import SCHEMA_DIR, format_time
 from sentinel.incidents import lifecycle
 from sentinel.simulation import scenarios
 from sentinel.store.db import Store
 
 NOW = datetime(2026, 10, 27, 12, 0, tzinfo=UTC)
 _CRED = make_cred_ref("ab" * 8)
+_REVOKED = make_cred_ref("ef" * 8)  # a credential whose revocation was verified (R11 scenario)
 
 # Steps whose verification Sentinel performs itself (fresh provider evidence). Everything else is a
 # recorded human attestation.
@@ -58,6 +59,7 @@ class Scenario:
     build: Callable[[], list[dict[str, Any]]]
     live_sources: tuple[str, ...]  # collector health prefixes that must be ok for a live source
     live_note: str
+    setup: Callable[[Store], None] | None = None  # state the chain needs (e.g. a verified finding)
 
 
 SCENARIOS: tuple[Scenario, ...] = (
@@ -69,6 +71,24 @@ SCENARIOS: tuple[Scenario, ...] = (
         + scenarios.provider_usage(_CRED, "gcp-demo", NOW),
         ("scan:", "gcp:"),
         "needs a scan AND a live Google usage source (not run live yet)",
+    ),
+    Scenario(
+        "S0",
+        "Credential used after its revocation was verified",
+        "R11",
+        lambda: scenarios.provider_usage(_REVOKED, "gcp-demo", NOW + timedelta(hours=1)),
+        ("gcp:",),
+        "needs the Google collector (never run live); detects a revocation that did not hold",
+        setup=lambda store: store.put_doc(
+            "findings",
+            _REVOKED,
+            {
+                "cred_ref": _REVOKED,
+                "status": "revoked_verified",
+                "verified_at": format_time(NOW),
+                "locations": [],
+            },
+        ),
     ),
     Scenario(
         "S1/S15",
@@ -130,6 +150,8 @@ def run_scenario(spec: Scenario) -> dict[str, Any]:
     """Run one chain through the real pipeline in a throwaway state dir."""
     with tempfile.TemporaryDirectory() as tmp:
         store = Store(Path(tmp) / "coverage.db")
+        if spec.setup is not None:
+            spec.setup(store)
         for event in spec.build():
             store.add_event(event)
         created = lifecycle.open_incidents(store, NOW)

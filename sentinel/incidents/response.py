@@ -105,6 +105,32 @@ _PLANS: dict[str, tuple[_Step, ...]] = {
             False,
         ),
     ),
+    "R11": (
+        (
+            "confirm_revocation_state",
+            "Re-check the provider: is the key really deleted, and is it the one you revoked?",
+            "investigate_first",
+            True,
+        ),
+        (
+            "revoke_again",
+            "Revoke the credential again (and any other copy found) in the provider console",
+            "approval_required",
+            True,
+        ),
+        (
+            "review_usage",
+            "Review provider usage and billing since the revocation was verified",
+            "investigate_first",
+            True,
+        ),
+        (
+            "find_other_copies",
+            "Scan other repositories, logs and machines for another copy of the key",
+            "investigate_first",
+            True,
+        ),
+    ),
     "R10": (
         (
             "block_path",

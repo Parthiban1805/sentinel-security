@@ -28,6 +28,10 @@ _UNKNOWNS: dict[str, tuple[str, ...]] = {
         "Whether the actor is a legitimate new contributor.",
     ),
     "R8": ("Whether the release was built by the modified pipeline or by an earlier run.",),
+    "R11": (
+        "Whether the revoked key is still active, or the usage is late-arriving provider data.",
+        "Whether another copy of the key exists elsewhere.",
+    ),
     "R4": ("Whether the volume comes from credential abuse or from legitimate load.",),
     "R6": ("Whether the session was stolen or the user changed device or location.",),
     "R7": ("Where the decoy was read and by whom.",),

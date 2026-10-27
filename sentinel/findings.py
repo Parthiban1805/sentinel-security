@@ -100,6 +100,10 @@ def set_status(
         doc["accepted_until"] = None
     previous = doc["status"]
     doc["status"] = status
+    if status == "revoked_verified":
+        doc["verified_at"] = format_time(now)  # lets R11 tell later use from the original abuse
+    elif previous == "revoked_verified":
+        doc.pop("verified_at", None)  # no longer verified: the watch window no longer applies
     if evidence or note:
         doc["notes"].append(
             {"time": format_time(now), "actor": actor, "evidence": evidence, "note": note}

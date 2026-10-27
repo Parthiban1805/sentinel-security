@@ -67,6 +67,22 @@ New rules: use the spec format in `.claude/skills/correlation-rule-authoring/SKI
 - **Inputs:** `workflow_changed` then `release_published` on the same repo asset. **Window:** 0 to 24h `[confirm]`.
 - **Output:** High floor, confidence low (most such releases are normal); a provenance review is the required step.
 
+## Implemented in v0.5 (verification watch; tests in `tests/sentinel/test_r11.py`)
+
+### R11: a credential is used AFTER it was verified revoked
+- **Why:** "verified" is a claim. If the provider still reports use after the revocation was verified, the revocation did not take effect
+  (a different key was revoked, a second copy exists, or propagation is delayed). Without this rule Sentinel went quiet about a key once
+  it was marked `revoked_verified` (R1 deliberately stops firing).
+- **Inputs:** `credential_usage_anomaly` events with a `credential_ref` whose finding has `status = revoked_verified` and a recorded
+  `verified_at`. **Join key:** `credential_ref`. **Window:** none upper bound; only events strictly AFTER `verified_at` count, so older usage
+  (the original abuse) never matches.
+- **Output:** one Critical incident per credential. Confidence high when the collector flagged `use_of_dead_key` (it already knew the key
+  should be dead), otherwise medium. Facts: the verification time and the later usage. **Hypothesis (not proven):** the revocation was not
+  effective. Plan: re-check the provider state (investigate), revoke again (approval), review usage (investigate), find other copies (investigate).
+- **False positives:** clock skew between the provider and this machine; late-arriving provider data for hours before the revocation (Google data
+  is up to ~30 minutes late, so events are compared by their own time, not arrival time). **Known gaps:** needs `verified_at`, which findings
+  verified before v0.5 do not have (they are never matched, to avoid guessing).
+
 ## Implemented in v0.4 (exposure probes; tests in `tests/sentinel/test_probes.py`)
 
 ### R10: a sensitive path is served by our own host (S1, S15)
