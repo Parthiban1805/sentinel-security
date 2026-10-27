@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sentinel import __version__, config, findings, runner
+from sentinel import __version__, config, doctor, findings, runner
 from sentinel.events.schema import SchemaError, format_time
 from sentinel.incidents import lifecycle
 from sentinel.incidents.lifecycle import IncidentError
@@ -249,6 +249,17 @@ def cmd_inventory_alias(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    checks = doctor.run_checks(_home(args), Path(args.config), Path.cwd())
+    marks = {"ok": "OK  ", "warn": "WARN", "fail": "FAIL"}
+    for c in checks:
+        print(f"[{marks[c.status]}] {c.name}: {c.detail}")
+    failed = sum(c.status == "fail" for c in checks)
+    warned = sum(c.status == "warn" for c in checks)
+    print(f"{len(checks)} checks: {failed} failed, {warned} warning(s)")
+    return 1 if failed else 0
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     settings = config.load(Path(args.config))
     result = runner.run_once(_store(args), _home(args), settings, _now(), scan=not args.no_scan)
@@ -328,6 +339,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--project", required=True, help="GCP project id")
     p.add_argument("--credential-id", required=True, help="key uid or 'apikey:<uid>'")
     p.add_argument("--actor", required=True)
+
+    p = add(
+        sub, "doctor", cmd_doctor, help="read-only health checks (no network, no secrets shown)"
+    )
+    p.add_argument("--config", default="sentinel.toml")
 
     p = add(sub, "run", cmd_run, help="one pass: scan, collect, correlate, alert")
     p.add_argument("--config", default="sentinel.toml")
