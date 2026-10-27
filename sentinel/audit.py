@@ -79,13 +79,18 @@ def evaluate(repo: Probe, protection: Probe) -> list[AuditFinding]:
 
     analysis = meta.get("security_and_analysis")
     if not isinstance(analysis, dict):
-        out.append(
-            AuditFinding(
-                "SS0",
-                "low",
-                f"{CHECKS['SS0']} (needs Administration read, or the feature is not on this plan)",
+        if hint == "plan_limit":
+            # Branch protection already said "plan limit": the same limit very likely explains
+            # why the scanning settings are absent. A hypothesis, not something GitHub states.
+            why = (
+                "most likely because secret scanning is not offered for private repositories on "
+                "this plan (hypothesis: the branch-protection call reported the same plan limit)"
             )
-        )
+        elif hint == "no_permission":
+            why = "the token lacks the Administration (read) permission"
+        else:
+            why = "needs Administration read, or the feature is not on this plan"
+        out.append(AuditFinding("SS0", "low", f"{CHECKS['SS0']}: {why}"))
     else:
         if (analysis.get("secret_scanning") or {}).get("status") != "enabled":
             out.append(AuditFinding("SS1", "medium", CHECKS["SS1"]))

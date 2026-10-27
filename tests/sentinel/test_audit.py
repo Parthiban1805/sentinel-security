@@ -83,6 +83,18 @@ def test_free_plan_private_repo_is_reported_as_a_plan_limit_not_a_permission_pro
     assert "SS0" in checks(found)  # scanning settings invisible: "cannot see", not "off"
 
 
+def test_scanning_settings_missing_after_a_plan_limit_is_explained_as_a_hypothesis() -> None:
+    """Found live: with Administration read granted, SS0 still appeared. The message must not blame the token."""
+    meta = {"default_branch": "main", "private": True}
+    ss0 = next(
+        f for f in audit.evaluate((200, meta, None), (403, None, "plan_limit")) if f.check == "SS0"
+    )
+    assert "private repositories on this plan" in ss0.detail and "hypothesis" in ss0.detail
+    assert "lacks" not in ss0.detail  # the token is not the suspect here
+    permission = audit.evaluate((200, meta, None), (403, None, "no_permission"))
+    assert "lacks the Administration" in next(f for f in permission if f.check == "SS0").detail
+
+
 def test_missing_permission_is_distinct_from_the_plan_limit() -> None:
     found = audit.evaluate((200, {"default_branch": "main"}, None), (403, None, "no_permission"))
     gp9 = next(f for f in found if f.check == "GP9")
