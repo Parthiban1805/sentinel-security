@@ -214,6 +214,26 @@ def test_r2_fires_for_non_maintainer_adding_network(tmp_path: Path) -> None:
     assert (m.rule_id, m.severity_floor) == ("R2", "high")
 
 
+def test_r2_quiet_for_repo_owner_even_without_history(tmp_path: Path) -> None:
+    """Regression (live false positive): the owner's own first commit must not be 'non-maintainer'."""
+    routes = repo_routes("o", "+  run: curl https://x.invalid", None)  # author == repo owner "o"
+    base = "https://api.github.com/repos/o/r"
+    routes[f"{base}/commits?since="] = []  # no earlier commits at all
+    events = collector(routes).collect_repo(Store(tmp_path / "s.db"), "o/r", NOW, timedelta(days=7))
+    [change] = events
+    assert change["attributes"]["actor_is_maintainer"] is True
+    assert change["attributes"]["actor_basis"] == "repo owner"
+    assert correlate(events, Context()) == []
+
+
+def test_r2_first_commit_with_no_history_is_not_judged(tmp_path: Path) -> None:
+    routes = repo_routes("someone-else", "+  run: curl https://x.invalid", None)
+    routes["https://api.github.com/repos/o/r/commits?since="] = []
+    events = collector(routes).collect_repo(Store(tmp_path / "s.db"), "o/r", NOW, timedelta(days=7))
+    assert events[0]["attributes"]["actor_basis"].startswith("no earlier commits")
+    assert correlate(events, Context()) == []
+
+
 def test_r2_quiet_for_maintainer(tmp_path: Path) -> None:
     store = Store(tmp_path / "s.db")
     events = collector(repo_routes("maint", "+  run: curl https://x.invalid", None)).collect_repo(

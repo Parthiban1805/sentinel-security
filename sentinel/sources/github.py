@@ -126,7 +126,17 @@ class GitHubCollector(DeferredState):
                     flags[name] = flags[name] or value
             login = (c.get("author") or {}).get("login")
             when = c["commit"]["author"]["date"]
-            maintainers = {a for a, d, sha in authors if a and sha != c["sha"] and d < when}
+            earlier = [(a, d) for a, d, sha in authors if sha != c["sha"] and d < when]
+            maintainers = {a for a, _d in earlier if a}
+            owner = repo.split("/")[0].lower()
+            if login and login.lower() == owner:
+                is_maintainer, basis = True, "repo owner"
+            elif not earlier:
+                # The first commits of a repo have no history to compare with: not judged.
+                is_maintainer, basis = True, "no earlier commits to compare (not judged)"
+            else:
+                is_maintainer = bool(login) and login in maintainers
+                basis = "commit author login (unverified)"  # author email can be forged
             events.append(
                 make_event(
                     event_type="workflow_changed",
@@ -141,10 +151,10 @@ class GitHubCollector(DeferredState):
                     attributes={
                         **flags,
                         "files": [f["filename"] for f in files],
-                        "actor_is_maintainer": bool(login) and login in maintainers,
+                        "actor_is_maintainer": is_maintainer,
                         # HYPOTHESIS basis: the author login comes from the commit's author
                         # email, which can be forged; it is not proof of who pushed.
-                        "actor_basis": "commit author login (unverified)",
+                        "actor_basis": basis,
                         "commit": c["sha"],
                     },
                 )
