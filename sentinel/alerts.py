@@ -23,6 +23,11 @@ $app = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell
 """
 
 
+def clean(text: str) -> str:
+    """Strip control characters so event/API text cannot forge log lines or toast content."""
+    return "".join(ch if ch.isprintable() else " " for ch in str(text))
+
+
 def should_alert(incident: dict[str, Any]) -> bool:
     return not incident["is_test"] and incident["severity"] in ALERT_SEVERITIES
 
@@ -30,7 +35,7 @@ def should_alert(incident: dict[str, Any]) -> bool:
 def write_log(home: Path, incident: dict[str, Any], now: Any) -> str:
     line = (
         f"{format_time(now)} {incident['severity'].upper()} {incident['id']} "
-        f"{incident['rule_id']} {incident['title']}\n"
+        f"{incident['rule_id']} {clean(incident['title'])}\n"
     )
     home.mkdir(parents=True, exist_ok=True)
     with (home / "alerts.log").open("a", encoding="utf-8") as handle:
@@ -41,10 +46,17 @@ def write_log(home: Path, incident: dict[str, Any], now: Any) -> str:
 def toast(title: str, body: str) -> bool:
     if sys.platform != "win32":
         return False
-    env = {**os.environ, "SENTINEL_TOAST_TITLE": title[:120], "SENTINEL_TOAST_BODY": body[:240]}
+    # Minimal environment: no tokens leak to the child, and powershell is resolved by absolute path.
+    system_root = os.environ.get("SystemRoot", r"C:\Windows")
+    powershell = Path(system_root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    env = {
+        "SystemRoot": system_root,
+        "SENTINEL_TOAST_TITLE": clean(title)[:120],
+        "SENTINEL_TOAST_BODY": clean(body)[:240],
+    }
     try:
         proc = subprocess.run(  # noqa: S603 (fixed argv; data passed via env)
-            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", _TOAST_SCRIPT],  # noqa: S607
+            [str(powershell), "-NoProfile", "-NonInteractive", "-Command", _TOAST_SCRIPT],
             env=env,
             capture_output=True,
             timeout=20,

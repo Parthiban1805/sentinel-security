@@ -79,14 +79,19 @@ def run_once(
 
             guard(f"scan:{target.name}", scan_one)
 
-    token = github_token(home)
     if settings.github_repos or settings.github_user_keys:
-        if not token:
-            health["github"] = (
-                f"skipped: no token (env {GITHUB_TOKEN_ENV} or {home / GITHUB_TOKEN_FILE})"
-            )
+        github_credential: str | None = None
+        try:
+            github_credential = github_token(home)
+        except (OSError, UnicodeDecodeError) as exc:  # type only: never the file content
+            health["github"] = f"error: token file unreadable ({type(exc).__name__})"
         else:
-            gh = GitHubCollector(http, token, key)
+            if not github_credential:
+                health["github"] = (
+                    f"skipped: no token (env {GITHUB_TOKEN_ENV} or {home / GITHUB_TOKEN_FILE})"
+                )
+        if github_credential:
+            gh = GitHubCollector(http, github_credential, key)
             if settings.github_user_keys:
                 guard("github:user_keys", lambda: add(gh.collect_user_keys(store, now)))
 
@@ -154,17 +159,21 @@ def verify_key(
     aliases = [a for a in store.docs("aliases") if a["cred_ref"] == cred]
     if not cred or not aliases:
         raise ValueError("incident credential has no provider alias; run `inventory alias` first")
+    known_keys = {a["asset_id"] for a in store.assets()}
     results = []
     passed = True
     for alias in aliases:
         status = collector.key_status(alias["project"], alias["uid"])
-        ok = bool(status["deleted"])
+        if status["found"]:
+            ok = bool(status["deleteTime"])  # only a recorded deletion time counts as proof
+            state = f"deleted at {status['deleteTime']}" if ok else "ACTIVE"
+        elif f"gcp-key-{alias['uid']}" in known_keys:
+            ok = True  # Sentinel saw this exact key before; it is now gone
+            state = "absent (previously seen in inventory, now gone)"
+        else:
+            ok = False  # never seen: could be a mistyped alias or project, so no proof
+            state = "NOT FOUND and never seen before (check the alias for typos); not verified"
         passed = passed and ok
-        state = (
-            "absent"
-            if not status["found"]
-            else (f"deleted at {status['deleteTime']}" if ok else "ACTIVE")
-        )
         results.append(f"gcp {alias['project']} key uid {alias['uid']}: {state}")
     evidence = f"apikeys.list (showDeleted) at {format_time(now)}: " + "; ".join(results)
     lifecycle.verify(store, iid, "revoke_credential", actor, now, passed=passed, evidence=evidence)

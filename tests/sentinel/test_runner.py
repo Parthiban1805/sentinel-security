@@ -147,6 +147,26 @@ def test_verify_key_fails_while_key_is_active(tmp_path: Path) -> None:
     assert step["state"] == "verification_failed"
 
 
+def test_verify_key_not_found_and_never_seen_is_not_proof(tmp_path: Path) -> None:
+    """A mistyped alias must not make a live key look revoked."""
+    store = Store(tmp_path / "s.db")
+    iid = open_r1(store)
+    collector = GcpCollector(HttpClient(KeysTransport([])), FakeTokens())  # empty listing
+    passed, evidence = runner.verify_key(store, iid, "me", NOW, collector)
+    assert passed is False and "never seen" in evidence
+
+
+def test_verify_key_absent_but_previously_seen_passes(tmp_path: Path) -> None:
+    store = Store(tmp_path / "s.db")
+    iid = open_r1(store)
+    GcpCollector(HttpClient(KeysTransport([{"uid": "uid1"}])), FakeTokens()).sync_key_assets(
+        store, "demo", NOW
+    )
+    gone = GcpCollector(HttpClient(KeysTransport([])), FakeTokens())
+    passed, evidence = runner.verify_key(store, iid, "me", NOW, gone)
+    assert passed is True and "previously seen" in evidence
+
+
 def test_verify_key_passes_when_deleted(tmp_path: Path) -> None:
     store = Store(tmp_path / "s.db")
     iid = open_r1(store)

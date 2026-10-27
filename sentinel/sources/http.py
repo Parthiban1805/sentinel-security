@@ -12,7 +12,7 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 ALLOWED_HOSTS = frozenset(
     {
@@ -51,16 +51,28 @@ class Transport(Protocol):
     ) -> Response: ...
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never follow redirects: urllib would forward Authorization to the new location."""
+
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+_MAX_BODY = 10 * 1024 * 1024
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 class UrllibTransport:
     def send(
         self, method: str, url: str, headers: dict[str, str], body: bytes | None, timeout: float
     ) -> Response:
         request = urllib.request.Request(url, data=body, headers=headers, method=method)  # noqa: S310
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as resp:  # noqa: S310 (checked)
-                return Response(
-                    resp.status, {k.lower(): v for k, v in resp.headers.items()}, resp.read()
-                )
+            with _OPENER.open(request, timeout=timeout) as resp:
+                data = resp.read(_MAX_BODY + 1)
+                if len(data) > _MAX_BODY:
+                    raise HttpError(f"response too large from {urlsplit(url).hostname}")
+                return Response(resp.status, {k.lower(): v for k, v in resp.headers.items()}, data)
         except urllib.error.HTTPError as exc:
             return Response(exc.code, {k.lower(): v for k, v in exc.headers.items()}, b"")
         except (urllib.error.URLError, TimeoutError) as exc:
@@ -73,7 +85,21 @@ def check_url(url: str, method: str = "GET") -> None:
         raise HttpError("only https is allowed")
     if parts.hostname not in ALLOWED_HOSTS:
         raise HttpError(f"host not in ADR-0005 allowlist: {parts.hostname}")
-    if any(p in parts.path.lower() for p in _DENY_PATH_PARTS):
+    try:
+        port = parts.port
+    except ValueError as exc:
+        raise HttpError("invalid port") from exc
+    if port not in (None, 443):
+        raise HttpError("only the default HTTPS port is allowed")
+    path = parts.path
+    for _ in range(5):  # servers decode percent-escapes: check the decoded form too
+        decoded = unquote(path)
+        if decoded == path:
+            break
+        path = decoded
+    if ".." in path.split("/"):
+        raise HttpError("path traversal is not allowed")
+    if any(p in path.lower() for p in _DENY_PATH_PARTS):
         raise HttpError("fetching raw key strings is forbidden")
     if method not in ("GET", "POST"):
         raise HttpError(f"method not allowed: {method}")
@@ -103,7 +129,7 @@ class HttpClient:
             if resp.status in _RETRY_STATUS and attempt < self._retries:
                 self._sleep(min(2**attempt, 30))
                 continue
-            if resp.status >= 400:
+            if resp.status >= 300:  # includes redirects, which are never followed
                 raise HttpError(f"HTTP {resp.status} from {where}", resp.status)
             return resp
         raise HttpError(f"retries exhausted for {where}")  # pragma: no cover

@@ -6,6 +6,7 @@ anything else sees a finding. Logs go to stderr and contain no values.
 """
 
 import json
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass, replace
@@ -13,7 +14,11 @@ from pathlib import Path
 
 from sentinel.security import fingerprint
 
-EXCLUDED_PATHS = (
+# Working-tree scans skip dependency/build/state folders (noise, and the state dir holds the
+# user's own token file by design). History scans exclude NOTHING: a secret committed under
+# build/ or target/, or a committed .sentinel/ directory, is a real exposure.
+WORKING_TREE_EXCLUDES = (
+    r"(^|/)\.sentinel/",
     r"node_modules/",
     r"(^|/)\.venv/",
     r"(^|/)venv/",
@@ -71,9 +76,16 @@ def parse(raw_json: str, key: bytes) -> list[Finding]:
     return findings
 
 
-def _config_text() -> str:
-    paths = ", ".join(f"'''{p}'''" for p in EXCLUDED_PATHS)
+def _config_text(mode: str) -> str:
+    if mode == "git":
+        return "[extend]\nuseDefault = true\n"
+    paths = ", ".join(f"'''{p}'''" for p in WORKING_TREE_EXCLUDES)
     return f"[extend]\nuseDefault = true\n[allowlist]\npaths = [{paths}]\n"
+
+
+def _child_env() -> dict[str, str]:
+    """gitleaks does not need our tokens."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("SENTINEL_")}
 
 
 def run(
@@ -82,9 +94,11 @@ def run(
     """Scan `target`. mode: "dir" (working tree) or "git" (all history, all refs)."""
     if mode not in ("dir", "git"):
         raise ValueError("mode must be 'dir' or 'git'")
+    if str(target).startswith("-"):
+        raise ValueError("scan target must not start with '-'")
     work_dir.mkdir(parents=True, exist_ok=True)
-    config = work_dir / "gitleaks-scan.toml"
-    config.write_text(_config_text(), encoding="utf-8")
+    config = work_dir / f"gitleaks-scan-{mode}.toml"
+    config.write_text(_config_text(mode), encoding="utf-8")
     cmd = [
         find_gitleaks(),
         mode,
@@ -103,7 +117,7 @@ def run(
     cmd.append(str(target))
     try:
         proc = subprocess.run(  # noqa: S603 (fixed argv, no shell)
-            cmd, capture_output=True, text=True, timeout=timeout, check=False
+            cmd, capture_output=True, text=True, timeout=timeout, check=False, env=_child_env()
         )
     except subprocess.TimeoutExpired as exc:
         raise ScanError(f"gitleaks timed out after {timeout}s") from exc

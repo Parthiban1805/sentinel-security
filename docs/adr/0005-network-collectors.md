@@ -19,6 +19,23 @@ destination is documented in the module README and an ADR. Research: `docs/resea
 - Each collector has a README naming its destinations and scopes.
 - Tests never touch the network: they use a fake transport and documented-shape fixtures.
 
+## Amendments after the 2026-10-27 security review (tests in `tests/sentinel/test_collectors.py`)
+- **Redirects are never followed** (3xx is an error). Verified with local servers: urllib's default handler forwards
+  `Authorization` to the redirect target, which would have sent the token off-allowlist.
+- The path check runs on the percent-decoded path (repeatedly): `keystring` anywhere, `..` segments and any port other
+  than 443 are refused. Response bodies are capped at 10 MB.
+- The GitHub token is read from env `SENTINEL_GITHUB_TOKEN`, else from `<home>/github-token.txt` (created by the user in
+  the git-ignored state dir; excluded from working-tree scans). Errors never include its content.
+- Child processes get a minimal environment (the toast) or no `SENTINEL_*` variables (gitleaks).
+- `verify-key` passes only on a recorded `deleteTime`, or when the exact key was previously seen in the inventory and is
+  now gone. "Never seen" is not proof (a mistyped alias must not make a live key look revoked).
+- History scans exclude no paths (a key under `build/` is still an exposure).
+- **Open (not fixed):** `google-auth` makes its own HTTPS calls via `requests`, bypassing `HttpClient`, so its hosts
+  (token refresh; other hosts depend on the ADC credential type) are not enforced by the allowlist. Restrict to
+  `authorized_user` ADC and document the hosts before enabling the GCP collector. Cursors can advance before events are
+  stored if storing fails. The usage baseline can be inflated by a slow ramp. Missing diff `patch` is treated as "no
+  risky lines". Free-text CLI evidence is not screened for secrets. SQLite connections are not closed explicitly.
+
 ## Consequences (security, operations, cost)
 - Security: new outbound traffic from the workstation to 4 hosts; read-only tokens limit blast radius if Sentinel
   is compromised. Token compromise is still possible from the environment; prefer short-lived ADC.

@@ -59,6 +59,35 @@ def test_parse_drops_secret_and_hashes() -> None:
     assert "TOPSECRET" not in repr(f)
 
 
+def test_load_key_is_atomic_and_validated(tmp_path: Path) -> None:
+    home = tmp_path / "h"
+    first = load_key(home)
+    assert len(first) == 32 and load_key(home) == first
+    (home / "fingerprint.key").write_bytes(b"short")  # truncated key must be refused
+    with pytest.raises(ValueError, match="32 bytes"):
+        load_key(home)
+    (home / "fingerprint.key").write_bytes(b"")
+    with pytest.raises(ValueError):
+        load_key(home)
+
+
+@needs_gitleaks
+def test_history_scan_does_not_skip_build_dirs(tmp_path: Path) -> None:
+    """A key committed under build/ must still be found in history (no evasion by path)."""
+    repo = tmp_path / "proj"
+    (repo / "build").mkdir(parents=True)
+    git(repo, "init", "-q")
+    git(repo, "config", "user.email", "t@example.invalid")
+    git(repo, "config", "user.name", "sentinel-test")
+    (repo / "build" / "cfg.txt").write_text(f'gemini_api_key = "{fake_google_key()}"\n')
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "x")
+    home = tmp_path / "home"
+    k = load_key(home)
+    assert gitleaks.run(repo, "dir", k, home) == []  # working tree skips build/ (noise)
+    assert len(gitleaks.run(repo, "git", k, home)) == 1  # history never skips
+
+
 def test_parse_empty_output() -> None:
     assert gitleaks.parse("", b"k" * 32) == []
     assert gitleaks.parse("null", b"k" * 32) == []
@@ -74,6 +103,17 @@ def test_same_key_in_history_and_tree_is_one_credential(tmp_path: Path) -> None:
     assert len(hits) >= 2
     assert len({h.cred_ref for h in hits}) == 1  # one key = one ID
     assert hits[0].cred_ref == f"cred-fp-{fingerprint(key, k)}"
+
+
+@needs_gitleaks
+def test_sentinel_state_dir_is_not_scanned(tmp_path: Path) -> None:
+    repo = tmp_path / "proj"
+    (repo / ".sentinel").mkdir(parents=True)
+    (repo / ".sentinel" / "github-token.txt").write_text(f"token = {fake_google_key()}\n")
+    (repo / "app.txt").write_text(f'gemini_api_key = "{fake_google_key()}"\n')
+    home = tmp_path / "home"
+    hits = gitleaks.run(repo, "dir", load_key(home), home)
+    assert {h.file for h in hits} == {"app.txt"}  # real leak found, state dir ignored
 
 
 @needs_gitleaks

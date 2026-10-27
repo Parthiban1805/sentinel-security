@@ -65,6 +65,74 @@ def test_retry_then_error_never_contains_token_or_query() -> None:
     assert TOKEN not in str(exc.value) and "token=" not in str(exc.value)
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://apikeys.googleapis.com/v2/projects/p/locations/global/keys/k/key%53tring",
+        "https://apikeys.googleapis.com/v2/projects/p/locations/global/keys/k%3AgetKey%2553tring",
+        "https://api.github.com/repos/o/r/../../user/keys",
+        "https://api.github.com/repos/o/r/%2e%2e/%2e%2e/user",
+        "https://api.github.com:8443/user",
+    ],
+)
+def test_client_refuses_encoded_bypasses_traversal_and_odd_ports(url: str) -> None:
+    transport = FakeTransport({})
+    with pytest.raises(HttpError):
+        HttpClient(transport).get(url)
+    assert transport.calls == []
+
+
+def test_redirect_responses_are_errors_not_followed() -> None:
+    url = "https://api.github.com/user"
+    transport = FakeTransport({}, {url: [307]})
+    with pytest.raises(HttpError) as exc:
+        HttpClient(transport).get(url, {"Authorization": TOKEN})
+    assert exc.value.status == 307 and transport.calls == [url]  # never re-requested elsewhere
+
+
+def test_real_transport_does_not_follow_redirects_or_forward_authorization() -> None:
+    """Local servers + the real UrllibTransport: the second server must never be contacted."""
+    import http.server
+    import threading
+
+    from sentinel.sources.http import UrllibTransport
+
+    hits: list[str | None] = []
+
+    class Target(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            hits.append(self.headers.get("Authorization"))
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    target = http.server.HTTPServer(("127.0.0.1", 0), Target)
+
+    class Redirector(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(307)
+            self.send_header("Location", f"http://127.0.0.1:{target.server_port}/x")
+            self.end_headers()
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    redirector = http.server.HTTPServer(("127.0.0.1", 0), Redirector)
+    for server in (target, redirector):
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        resp = UrllibTransport().send(
+            "GET", f"http://127.0.0.1:{redirector.server_port}/", {"Authorization": TOKEN}, None, 5
+        )
+    finally:
+        target.shutdown()
+        redirector.shutdown()
+    assert resp.status == 307
+    assert hits == []  # the redirect target was never contacted, so no header was forwarded
+
+
 # github collector --------------------------------------------------------------------
 def test_added_line_flags_ignore_removed_and_context_lines() -> None:
     patch = "@@\n-run: curl http://old\n context\n+run: echo ${{ secrets.DEPLOY }}\n"
