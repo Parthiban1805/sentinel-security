@@ -39,8 +39,20 @@ New rules: use the spec format in `.claude/skills/correlation-rule-authoring/SKI
 - **Inputs:** `login_anomaly` then `token_created` or `ssh_key_added` with the same `identity_ref`.
 - **Window:** 1 hour, 0 <= delta <= 1h. **Output:** Critical; confidence medium. Hypothesis: stolen session.
 
-### R7: canary used
-- **Inputs:** any `canary_triggered`. **Output:** Critical, confidence high (decoys have no legitimate use).
+### R7: canary triggered
+- **Inputs:** `canary_triggered` events. Real events come from `sentinel canary` (ADR-0009) with `attributes.reason`; an event with
+  no reason (the simulated chain, or a future hosted-canary source reporting actual use) is treated as use of the decoy.
+- **Condition and output, by reason:**
+  | reason | meaning | incident | severity floor | confidence |
+  |---|---|---|---|---|
+  | `copied` | the decoy's value was found at another location by the secret scan | yes | critical | high |
+  | `modified`, `removed` | the decoy file changed or vanished | yes | high | medium |
+  | `read` | the file's access time moved | **no** (event only) | n/a | low |
+  | none (use) | the decoy was used | yes | critical | high |
+- **Why `read` never opens an incident:** antivirus and desktop indexers read files, and Windows can delay or disable access-time
+  updates. It is recorded for investigation but is not an alert. Not seeing a read proves nothing.
+- **Hypothesis labelling:** a copy proves the decoy value moved, not who moved it or why. **Not detectable:** use of the decoy at a provider
+  (needs a live provider key or a hosted canary service).
 
 ## Implemented in v0.2 (real GitHub signals; tests in `tests/sentinel/test_collectors.py`)
 

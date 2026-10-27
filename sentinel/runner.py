@@ -10,7 +10,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-from sentinel import agentlog, alerts, dependencies, findings, hygiene, probes
+from sentinel import agentlog, alerts, canaries, dependencies, findings, hygiene, probes
 from sentinel.config import ProbeHost, Settings
 from sentinel.events.schema import format_time
 from sentinel.incidents import lifecycle
@@ -77,6 +77,10 @@ def run_once(
                 found = gitleaks.run(target, "dir", key, home)
                 if (target / ".git").exists():
                     found += gitleaks.run(target, "git", key, home)
+                # Decoy values are never "live credential" findings: a decoy found anywhere but
+                # its own planted file is a COPIED canary event (rule R7).
+                canary_events, found = canaries.filter_findings(store, target, found, now)
+                add(canary_events)
                 return len(findings.ingest(store, asset_id_for(target), found, now))
 
             guard(f"scan:{target.name}", scan_one)
@@ -95,6 +99,9 @@ def run_once(
                 return stored_count
 
             guard(f"hygiene:{target.name}", hygiene_one)
+
+    if store.docs("canaries"):  # tripwire pass over armed decoys (stat only; never reads them)
+        guard("canary:check", lambda: add(canaries.check(store, now)))
 
     if settings.github_repos or settings.github_user_keys:
         github_credential: str | None = None

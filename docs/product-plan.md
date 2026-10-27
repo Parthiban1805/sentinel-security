@@ -117,7 +117,10 @@ fixed by trusting lockfiles. **`sentinel init` built** (guided setup: config, st
 repo and project names validated). **Exposure probes (S1, S15) built:** `sentinel probe` checks owner-confirmed hosts for served
 `.env`, `.git`, SQL dumps, archives and key files by file SHAPE (never storing content), rule R10, and the first automatic
 verifier that is not Google-specific (`incident verify-probe` re-probes the path; a network error fails the step). ADR-0008, scenario
-doc `S1-exposed-sensitive-path.md`. Real exposure on a real host not yet exercised. **Still to build:** canaries, GitHub
+doc `S1-exposed-sensitive-path.md`. Exercised live on a local server (detected, verified failing while exposed and passing after the fix, closed verified).
+**Canary decoys built** (R7 for real, ADR-0009): fake provider-shaped credential files; a COPIED decoy (found by the normal secret scan) is a
+critical incident, tampering is a high incident, a READ is a low-confidence event that never pages; decoys never become live-credential
+findings; exercised live in a scratch folder. **Not detectable with a self-built decoy:** use at a provider. **Still to build:** GitHub
 protection audit, and rule R3 (needs endpoint telemetry).
 - `sentinel hygiene`: tracked `.env`, missing `.gitignore` entries, missing pre-commit hook, dump files.
 - Workflow policy checks (S8, S9, S10): unpinned actions, `pull_request_target` on untrusted code, broad permissions;

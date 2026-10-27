@@ -12,7 +12,16 @@ from typing import Any
 
 from sentinel.events.schema import format_time, validate_asset, validate_event
 
-_DOC_TABLES = ("findings", "links", "incidents", "cursors", "aliases", "snapshots", "baselines")
+_DOC_TABLES = (
+    "findings",
+    "links",
+    "incidents",
+    "cursors",
+    "aliases",
+    "snapshots",
+    "baselines",
+    "canaries",
+)
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS events (
@@ -35,6 +44,7 @@ CREATE TABLE IF NOT EXISTS cursors   (k TEXT PRIMARY KEY, body TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS aliases   (k TEXT PRIMARY KEY, body TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS snapshots (k TEXT PRIMARY KEY, body TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS baselines (k TEXT PRIMARY KEY, body TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS canaries  (k TEXT PRIMARY KEY, body TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS audit (
     id   INTEGER PRIMARY KEY AUTOINCREMENT,
     time TEXT NOT NULL,

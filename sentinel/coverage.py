@@ -42,11 +42,11 @@ REAL_PRODUCERS = {
     "config_drift": "hygiene checks (sentinel hygiene)",
     "dependency_added": "dependency snapshots (sentinel run)",
     "exposed_service": "exposure probes (sentinel probe)",
+    "canary_triggered": "canary decoys (sentinel canary): copy, tamper, read; not provider use",
 }
 SIMULATION_ONLY = {
     "login_anomaly": "no login-history API for personal GitHub accounts",
     "token_created": "no real producer",
-    "canary_triggered": "no canary source built yet",
 }
 
 
@@ -112,11 +112,11 @@ SCENARIOS: tuple[Scenario, ...] = (
     ),
     Scenario(
         "All",
-        "Canary used",
+        "Canary copied, tampered with or used",
         "R7",
         lambda: scenarios.canary("decoy-demo", NOW),
-        (),
-        "no canary source built yet",
+        ("canary:",),
+        "decoy files: copy, tamper (detectable); use at a provider is not",
     ),
 )
 

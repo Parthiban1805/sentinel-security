@@ -13,6 +13,7 @@ from typing import Any
 from sentinel import (
     __version__,
     agentlog,
+    canaries,
     config,
     coverage,
     doctor,
@@ -58,6 +59,13 @@ def cmd_scan(args: argparse.Namespace) -> int:
     found = gitleaks.run(target, "dir", key, home)
     if args.history and (target / ".git").exists():
         found += gitleaks.run(target, "git", key, home)
+    canary_events, found = canaries.filter_findings(store, target, found, _now())
+    for event in canary_events:
+        store.add_event(event)
+        print(
+            f"CANARY {event['attributes']['canary_id']}: decoy copied to "
+            f"{event['attributes']['location']}"
+        )
     new = findings.ingest(store, asset_id, found, _now())
     print(f"{asset_id}: {len(found)} hit(s), {len(new)} new credential(s)")
     for ref in new:
@@ -362,6 +370,54 @@ def cmd_init(args: argparse.Namespace) -> int:
     return onboarding.run_init(opts, print, ask, lambda q: getpass.getpass(f"{q}: "))
 
 
+def cmd_canary_plant(args: argparse.Namespace) -> int:
+    key = load_key(_home(args))
+    doc = canaries.plant(
+        _store(args), key, Path(args.directory), _now(), kind=args.kind, name=args.name
+    )
+    print(f"planted {doc['canary_id']} ({doc['kind']}) at {doc['path']}")
+    print(f"  access-time tripwire: {doc['atime_check']}", end="")
+    print(
+        " (reads detected promptly)"
+        if doc["atime_check"] == "immediate"
+        else " (read detection unverified here)"
+    )
+    if doc["git_note"]:
+        print(f"  git: {doc['git_note']}")
+    print("  the decoy value is fake, random, never stored; only its fingerprint is kept")
+    return 0
+
+
+def cmd_canary_list(args: argparse.Namespace) -> int:
+    for d in _store(args).docs("canaries"):
+        triggers = ",".join(d["triggers"]) or "-"
+        print(
+            f"{d['canary_id']}  {d['status']:<9} {d['kind']:<10} "
+            f"triggers={triggers:<16} {d['path']}"
+        )
+    return 0
+
+
+def cmd_canary_check(args: argparse.Namespace) -> int:
+    store = _store(args)
+    events = canaries.check(store, _now())
+    stored = sum(store.add_event(e) for e in events)
+    for e in events:
+        a = e["attributes"]
+        print(
+            f"[{e['severity'].upper():<8}] {a['canary_id']} {a['reason']} "
+            f"(confidence {e['confidence']})"
+        )
+    print(f"{len(events)} signal(s), {stored} new event(s); read detection never opens an incident")
+    return 1 if any(e["attributes"]["reason"] != "read" for e in events) else 0
+
+
+def cmd_canary_disarm(args: argparse.Namespace) -> int:
+    canaries.disarm(_store(args), args.id, _now(), delete_file=args.delete_file)
+    print(f"{args.id}: disarmed" + (" and decoy file deleted" if args.delete_file else ""))
+    return 0
+
+
 def cmd_probe(args: argparse.Namespace) -> int:
     """Probe hosts YOU own for exposed sensitive files (read-only; content is never kept)."""
     settings = config.load(Path(args.config))
@@ -595,6 +651,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-token-prompt", action="store_true", help="do not ask for a GitHub token")
     p.add_argument("--no-gitignore", action="store_true", help="do not edit .gitignore")
     p.add_argument("--force", action="store_true", help="replace an existing config (keeps a .bak)")
+
+    can = sub.add_parser("canary", help="decoy credential files (rule R7)").add_subparsers(
+        dest="sub", required=True
+    )
+    p = add(can, "plant", cmd_canary_plant, help="place a fake credential file in a directory")
+    p.add_argument("directory")
+    p.add_argument("--kind", default="google_key", choices=sorted(canaries.KINDS))
+    p.add_argument("--name", default=canaries.DECOY_NAMES[0], help="file name of the decoy")
+    add(can, "list", cmd_canary_list)
+    add(can, "check", cmd_canary_check, help="tripwire pass (stat only; never reads the decoys)")
+    p = add(can, "disarm", cmd_canary_disarm, help="stop watching a decoy")
+    p.add_argument("id")
+    p.add_argument("--delete-file", action="store_true")
 
     p = add(sub, "probe", cmd_probe, help="check YOUR hosts for exposed .env/.git/backup files")
     p.add_argument("--config", default="sentinel.toml")

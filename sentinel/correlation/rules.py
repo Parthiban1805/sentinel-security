@@ -154,28 +154,46 @@ def timedelta_ok(delta: timedelta, ctx: Context) -> bool:
     return timedelta(0) <= delta <= ctx.config.r6_window
 
 
+_R7_FACTS = {
+    "copied": "The decoy's value was found at another location ({location}) by the secret scan.",
+    "modified": "The decoy file was modified.",
+    "removed": "The decoy file was removed.",
+}
+
+
 def r7_canary(events: list[Event], ctx: Context) -> list[Match]:
-    return [
-        Match(
-            rule_id="R7",
-            key=f"R7:{e['event_id']}",
-            title=f"Canary triggered on {e['asset_id']}",
-            severity_floor="critical",
-            confidence="high",
-            facts=(
-                f"A decoy credential/resource was used at {e['time']}. "
-                "Decoys have no legitimate use.",
-            ),
-            hypotheses=("Source and intent are unknown until investigated.",),
-            event_ids=(e["event_id"],),
-            asset_id=e["asset_id"],
-            first_time=e["time"],
-            last_time=e["time"],
-            is_test=e["is_test"],
+    """A decoy was copied, tampered with, removed or used. A mere 'read' is not an incident."""
+    matches: list[Match] = []
+    for e in events:
+        if e["event_type"] != "canary_triggered":
+            continue
+        attrs = e.get("attributes") or {}
+        reason = attrs.get("reason")
+        if reason == "read":
+            continue  # low-confidence tripwire (antivirus, indexers): event only
+        fact = _R7_FACTS.get(reason or "", "A decoy credential/resource was used.").format(
+            location=attrs.get("location", "?")
         )
-        for e in events
-        if e["event_type"] == "canary_triggered"
-    ]
+        matches.append(
+            Match(
+                rule_id="R7",
+                key=f"R7:{e['event_id']}",
+                title=f"Canary {reason or 'used'} on {e['asset_id']}",
+                # copied, or no reason (the decoy was USED): critical. Tampering: the event's own.
+                severity_floor="critical" if reason in (None, "copied") else e["severity"],
+                confidence=e["confidence"],
+                facts=(f"{fact} Detected at {e['time']}. Decoys have no legitimate use.",),
+                hypotheses=(
+                    "Who or what touched the decoy, and why, is unknown until investigated.",
+                ),
+                event_ids=(e["event_id"],),
+                asset_id=e["asset_id"],
+                first_time=e["time"],
+                last_time=e["time"],
+                is_test=e["is_test"],
+            )
+        )
+    return matches
 
 
 def r10_exposed_sensitive_path(events: list[Event], ctx: Context) -> list[Match]:
