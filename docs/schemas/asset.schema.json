@@ -10,7 +10,7 @@
     "asset_type": {
       "type": "string",
       "enum": ["developer_machine", "github_identity", "github_token", "repository", "api_key", "service_account",
-               "ci_workflow", "ai_agent", "mcp_server", "server", "cloud_account", "database", "backup", "dependency", "artifact"]
+               "ci_workflow", "ai_agent", "mcp_server", "server", "cloud_account", "database", "backup", "dependency", "artifact", "scan_location"]
     },
     "name": { "type": "string" },
     "owner": { "type": ["string", "null"], "description": "null = unowned = finding" },

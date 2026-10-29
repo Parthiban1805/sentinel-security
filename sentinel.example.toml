@@ -5,6 +5,13 @@ first_run_lookback_days = 7
 [scan]
 paths = ["P:/development/example-repo"]
 
+# Places outside Git that can hold a key (S2): CI logs, build output, an agent transcript, a history file.
+# Nothing outside Git is scanned unless you list it. Absolute paths only; a drive root or your whole home
+# folder is refused, and so are credential stores (.ssh, .aws, gcloud ...) unless you also set
+# allow_credential_stores = true. Findings keep a fingerprint, the file name and a line, never the value.
+# See ADR-0011.
+# extra_paths = ["P:/ci-logs", "P:/builds/output"]
+
 [github]
 repos = ["owner/repo"]
 user_keys = true          # watch the authenticated user's SSH keys

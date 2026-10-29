@@ -26,9 +26,46 @@ def _probe_hosts(data: dict[str, Any]) -> tuple[ProbeHost, ...]:
     return tuple(hosts)
 
 
+# Folders that hold credentials. Refused unless the owner sets `allow_credential_stores = true`:
+# Sentinel would otherwise read and fingerprint real keys there (CLAUDE.md rule 2 spirit).
+CREDENTIAL_STORE_NAMES = frozenset(
+    {".ssh", ".aws", ".gnupg", ".azure", ".kube", ".docker", "gcloud"}
+)
+
+
+def validate_extra_path(raw: str, *, allow_credential_stores: bool = False) -> str:
+    """An opt-in location outside Git (a log folder, a transcript, a history file).
+
+    Strict on purpose: it is read by the secret scanner. Absolute only, no `..` segments, and
+    after resolving links never a drive root, the home folder, or any folder that contains the
+    home folder, so a typo cannot widen the scan to a disk or a profile. Messages carry only the
+    final name, not the full path."""
+    text = str(raw)
+    name = Path(text).name or "(root)"
+    if not text.strip() or text.startswith("-"):
+        raise ValueError("scan.extra_paths: invalid path")
+    path = Path(text)
+    if not path.is_absolute():
+        raise ValueError(f"scan.extra_paths: use an absolute path ({name})")
+    if ".." in path.parts:
+        raise ValueError(f"scan.extra_paths: '..' is not allowed ({name})")
+    resolved = path.resolve()
+    home = Path.home().resolve()
+    if resolved.parent == resolved or resolved == home or resolved in home.parents:
+        raise ValueError(f"scan.extra_paths: too broad, name a specific folder or file ({name})")
+    if not allow_credential_stores and CREDENTIAL_STORE_NAMES & {p.lower() for p in resolved.parts}:
+        raise ValueError(
+            f"scan.extra_paths: {name} is inside a credential store; set "
+            "allow_credential_stores = true only if you really want Sentinel to read it"
+        )
+    return text
+
+
 @dataclass(frozen=True)
 class Settings:
     scan_paths: tuple[str, ...] = ()
+    extra_scan_paths: tuple[str, ...] = ()  # opt-in locations outside Git (S2); empty by default
+    allow_credential_stores: bool = False  # explicit opt-in to scan ~/.ssh, ~/.aws and the like
     github_repos: tuple[str, ...] = ()  # "owner/name"
     github_user_keys: bool = False
     gcp_projects: tuple[str, ...] = ()
@@ -66,11 +103,17 @@ def load(path: Path) -> Settings:
         return Settings()
     data = tomllib.loads(path.read_text(encoding="utf-8"))
     scan = data.get("scan", {})
+    allow_stores = scan.get("allow_credential_stores", False) is True
     gh = data.get("github", {})
     gcp = data.get("gcp", {})
     alerts = data.get("alerts", {})
     return Settings(
         scan_paths=tuple(scan.get("paths", [])),
+        extra_scan_paths=tuple(
+            validate_extra_path(p, allow_credential_stores=allow_stores)
+            for p in scan.get("extra_paths", [])
+        ),
+        allow_credential_stores=allow_stores,
         github_repos=tuple(validate_repo(r) for r in gh.get("repos", [])),
         github_user_keys=bool(gh.get("user_keys", False)),
         gcp_projects=tuple(validate_project(p) for p in gcp.get("projects", [])),

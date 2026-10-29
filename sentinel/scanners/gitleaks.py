@@ -189,13 +189,78 @@ def decoded_json_text(raw: str) -> str:
     return "\n".join(s for doc in docs for s in _json_strings(doc))
 
 
+@dataclass(frozen=True)
+class Coverage:
+    """What a working-tree scan could not look at. A scan with gaps must not read as clean."""
+
+    unreadable: int = 0  # files or folders that raised a permission or I/O error
+    symlinks: int = 0  # not followed: they could lead outside the listed scope
+    oversized_json: int = 0  # .json/.jsonl over the decoding limit (plain scanning still applies)
+
+    @property
+    def gaps(self) -> int:
+        return self.unreadable + self.symlinks + self.oversized_json
+
+    def describe(self) -> str:
+        return (
+            f"{self.unreadable} unreadable, {self.symlinks} symlink(s) not followed, "
+            f"{self.oversized_json} JSON file(s) over {_MAX_JSON_BYTES // (1024 * 1024)} MB"
+        )
+
+
+def coverage(target: Path) -> Coverage:
+    """Walk what a `dir` scan would visit and count what it cannot read (no file is read past
+    its first byte). Raises ValueError when the location itself is not readable."""
+    unreadable = symlinks = oversized = 0
+    if target.is_file():
+        candidates: Iterator[Path] = iter([target])
+    else:
+        if not os.access(target, os.R_OK | os.X_OK):
+            raise ValueError("the scan location is not readable")
+
+        def on_error(_exc: OSError) -> None:
+            nonlocal unreadable
+            unreadable += 1
+
+        def walk() -> Iterator[Path]:
+            for current, dirs, files in os.walk(target, onerror=on_error):
+                dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+                for name in files:
+                    yield Path(current) / name
+
+        candidates = walk()
+    for path in candidates:
+        if path.is_symlink():
+            symlinks += 1
+            continue
+        try:
+            size = path.stat().st_size
+            with path.open("rb") as handle:
+                handle.read(1)
+        except OSError:
+            unreadable += 1
+            continue
+        if path.suffix.lower() in _JSON_SUFFIXES and size > _MAX_JSON_BYTES:
+            oversized += 1
+    return Coverage(unreadable, symlinks, oversized)
+
+
+def scan_base(target: Path) -> Path:
+    """Folder that finding paths are made relative to (a single file reports its own name)."""
+    return target.parent if target.is_file() else target
+
+
 def _iter_json_files(target: Path) -> Iterator[Path]:
+    if target.is_file():
+        if target.suffix.lower() in _JSON_SUFFIXES:
+            yield target
+        return
     for current, dirs, files in os.walk(target):
         dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
         for name in files:
             path = Path(current) / name
-            if path.suffix.lower() in _JSON_SUFFIXES:
-                yield path
+            if path.suffix.lower() in _JSON_SUFFIXES and not path.is_symlink():
+                yield path  # a symlink could pull in content from outside the listed scope
 
 
 def _scan_json_files(
@@ -206,7 +271,7 @@ def _scan_json_files(
         "--report-format", "json", "--report-path", "-", "--exit-code", "0",
     ]  # fmt: skip
     out: list[Finding] = []
-    base = target.resolve()
+    base = scan_base(target).resolve()
     for path in _iter_json_files(target):
         try:
             if path.stat().st_size > _MAX_JSON_BYTES:
@@ -225,7 +290,10 @@ def _scan_json_files(
             raise ScanError(f"gitleaks timed out after {timeout}s") from exc
         if proc.returncode != 0:
             raise ScanError(f"gitleaks exited with code {proc.returncode}")
-        rel = path.resolve().relative_to(base).as_posix()
+        try:
+            rel = path.resolve().relative_to(base).as_posix()
+        except ValueError:  # resolves outside the scanned folder: skip it, never echo the paths
+            continue
         for f in parse(proc.stdout, key):
             if (f.cred_ref, rel) not in seen:
                 seen.add((f.cred_ref, rel))
@@ -235,11 +303,12 @@ def _scan_json_files(
 
 def _relativize(found: list[Finding], target: Path) -> list[Finding]:
     """Working-tree hits carry absolute paths; make them repo-relative like history hits."""
-    base = str(target.resolve()).replace("\\", "/").rstrip("/") + "/"
+    folder = scan_base(target)
+    base = str(folder.resolve()).replace("\\", "/").rstrip("/") + "/"
     out: list[Finding] = []
     for f in found:
         file = f.file
-        for prefix in (base, str(target).replace("\\", "/").rstrip("/") + "/"):
+        for prefix in (base, str(folder).replace("\\", "/").rstrip("/") + "/"):
             if file.startswith(prefix):
                 file = file[len(prefix) :]
                 break

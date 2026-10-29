@@ -133,6 +133,27 @@ told apart. Run live, it found that the configured token is being rejected by Gi
 **Verification watch built:** `sentinel watch` lists open incidents (stale after 24h by default), steps whose verification failed
 and incidents closed without verification (exit 1 if any failed or stale); `sentinel run` re-probes the path of every open real R10
 incident at most every 6 hours, so a fix is verified without anyone typing a command. 418 tests.
+**Re-scan verifier built** (`incident verify-rescan`, new optional R1 step `rescan_clean`): re-scans every recorded location of the
+incident's credential (working tree in dir mode, history locations in git mode) and passes only when every scan succeeded and none still
+finds the credential fingerprint. A scan error or a missing folder records nothing, so it is never proof. History hits stay failed until
+history is rewritten. Exercised with the real scanner on a runtime-generated fake key. The security review found four ways to a
+false pass, all fixed: nothing to scan (refused), a missing or new fingerprint key (the command now refuses to create one), a folder that
+is not an absolute path or not a Git repository (refused), and a result worded as proof (the evidence now says "scanned scope only";
+working-tree scans skip build folders and other repositories are not scanned). 440 tests.
+**Scanning outside Git built (S2, ADR-0011):** `[scan] extra_paths` in `sentinel.toml` lists folders or single files (logs, build output,
+agent transcripts, history files). The list is empty by default and nothing is scanned unless listed; paths must be absolute and drive
+roots or the whole home folder are refused. `sentinel run` scans each in `dir` mode, registers it as an unowned `scan_location` asset,
+and records fingerprint, relative file name and line only. A missing path is a health error, never "clean". `verify-rescan` works on
+these locations. Tested on a folder, a single history-style file and a JSON-escaped transcript with runtime-generated fake keys.
+The security review found six problems, all fixed: path checks that could be bypassed (`..`, the folder above home; paths are now
+resolved and re-checked at scan time), symlinks pulling in content from outside the listed scope (not followed; a listed symlink is
+refused), same-named locations hiding each other's health errors (keyed by asset id), unreadable or oversized files reading as a clean
+scan (now a `warn:` with counts, and an INCONCLUSIVE re-scan result), a false "copied" canary event for single-file locations, and
+credential stores being scannable by accident (refused unless `allow_credential_stores = true`). 467 tests; 2 symlink tests are skipped
+on this machine (Windows needs a privilege), so symlink handling is tested by simulating a link. How gitleaks itself treats a real
+symlink is **unverified**.
+**Not done:** no real workstation location is scanned yet; the owner must list each path (see pending-tasks.md item 6).
+**Next in v0.5:** automatic blast-radius edges from provider metadata.
 **v0.6 started (ADR-0010):** `sentinel incident summary <ID>` is a local, summary-only template. It makes no network call,
 uses no AI model, copies only an allow-listed set of fields, never proposes actions, and refuses to print credential-shaped
 text. An outside AI service would need a new ADR and a README first. 423 tests.
@@ -257,5 +278,3 @@ recorded decision 100 percent; false positives under 20 percent per rule; recove
 2. Verify the hook documentation facts (`session_id`, `mcp__.*` matcher).
 3. Build v0.3a in this order: schema and S2 fixes, `inventory approve`/`own`, `coverage`, then the tamper-evident log
    with the hook patches for you to apply, then Google live and the soak run if in scope.
-
-All generated code, infrastructure and recommendations require human review before production use.

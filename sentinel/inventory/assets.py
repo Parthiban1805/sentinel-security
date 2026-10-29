@@ -1,5 +1,6 @@
 """Asset discovery, import and inventory gap checks."""
 
+import hashlib
 import json
 import os
 import re
@@ -16,6 +17,48 @@ _SKIP_DIRS = {"node_modules", ".venv", "venv", "target", "dist", "build", "__pyc
 
 def asset_id_for(path: Path) -> str:
     return "repo-" + re.sub(r"[^a-z0-9]+", "-", path.resolve().name.lower()).strip("-")
+
+
+def location_asset_id(path: Path) -> str:
+    """Id for an opt-in location outside Git. The path hash keeps same-named folders apart."""
+    resolved = path.resolve()
+    text = resolved.as_posix()
+    if os.name == "nt":  # only Windows paths are case-insensitive
+        text = text.lower()
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+    slug = re.sub(r"[^a-z0-9]+", "-", resolved.name.lower()).strip("-") or "location"
+    return f"loc-{slug}-{digest}"
+
+
+def register_location(store: Store, path: Path, now: datetime) -> str:
+    """Register an opt-in scan location as an unowned asset (once). Returns its asset id.
+
+    An id that already exists for a DIFFERENT path is refused rather than reused."""
+    asset_id = location_asset_id(path)
+    known = {a["asset_id"]: a for a in store.assets()}
+    if asset_id in known:
+        stored = (known[asset_id].get("attributes") or {}).get("path")
+        if stored != str(path.resolve()):
+            raise ValueError(f"scan location id collision for {path.name}; not reusing the asset")
+    else:
+        store.upsert_asset(
+            {
+                "asset_id": asset_id,
+                "asset_type": "scan_location",
+                "name": path.name or "location",
+                "owner": None,
+                "importance": "medium",
+                "monitoring": "partial",
+                "recovery_method": None,
+                "approved": False,
+                "last_seen": format_time(now),
+                "attributes": {
+                    "path": str(path.resolve()),
+                    "kind": "file" if path.is_file() else "folder",
+                },
+            }
+        )
+    return asset_id
 
 
 def discover(store: Store, root: Path, now: datetime) -> list[str]:

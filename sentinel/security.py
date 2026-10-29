@@ -40,5 +40,15 @@ def load_key(home: Path) -> bytes:
     return key
 
 
+def load_existing_key(home: Path) -> bytes:
+    """Read the fingerprint key without ever creating one.
+
+    For checks that compare against fingerprints already stored: a freshly created key would give
+    different refs, so every credential would look absent."""
+    if not (home / _KEY_FILE).is_file():
+        raise ValueError(f"no {_KEY_FILE} in {home}; refusing to verify with a new key")
+    return load_key(home)
+
+
 def fingerprint(value: str, key: bytes) -> str:
     return hmac.new(key, value.encode("utf-8"), hashlib.sha256).hexdigest()[:_DIGEST_CHARS]

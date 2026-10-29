@@ -44,4 +44,3 @@ bugs, so the hooks enforce the same boundaries independently. Re-test after Clau
 ## Important
 - Check current Claude Code docs for settings/hook syntax: https://docs.claude.com/en/docs/claude-code/settings
 - Pin `actions/checkout` and other actions to verified full commit SHAs before relying on CI.
-- All content here requires human review before production use.

@@ -134,5 +134,3 @@ live Google Cloud collector after a security re-review.
 | Threat scenarios | `docs/scenarios/` |
 | Incident runbook | `docs/runbooks/credential-exposure.md` |
 | AI agent policy | `policies/agent-policy.md` |
-
-All generated code and recommendations require human review before production use.

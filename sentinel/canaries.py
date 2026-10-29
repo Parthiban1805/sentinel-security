@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from sentinel.events.schema import format_time, make_event
-from sentinel.scanners.gitleaks import Finding
+from sentinel.scanners.gitleaks import Finding, scan_base
 from sentinel.security import fingerprint
 from sentinel.simulation.fakes import fake_google_key
 from sentinel.store.db import Store
@@ -241,7 +241,7 @@ def filter_findings(
         return [], findings
     events: list[dict[str, Any]] = []
     kept: list[Finding] = []
-    base = target.resolve()
+    base = scan_base(target).resolve()  # a single-file target reports paths relative to its folder
     for f in findings:
         doc = by_ref.get(f.cred_ref)
         if doc is None:

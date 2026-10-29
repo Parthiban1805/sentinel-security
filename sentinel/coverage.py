@@ -31,6 +31,7 @@ AUTO_VERIFIED_STEPS = {
     "revoke_credential": "Google API key status (verify-key)",
     "verify_path_closed": "re-probe of the exposed path (verify-probe)",
     "revoke_token_or_ssh_key": "GitHub /user/keys listing (verify-ssh-key; SSH keys only)",
+    "rescan_clean": "gitleaks re-scan of the recorded locations (verify-rescan)",
 }
 
 # Which event types have a real producer today, which are simulation-only, and the rest have none.

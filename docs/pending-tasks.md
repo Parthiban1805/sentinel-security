@@ -60,6 +60,17 @@ uv run sentinel incident close INC-63C56A65 --actor <your-name>
 ```
 It should only add the secret-scan workflow with the pinned gitleaks download. If anything looks unfamiliar, do not close it; tell me.
 
+## 6. Choose the places outside Git to scan (S2, v0.5)
+**Why:** keys also end up in CI logs, build output, agent transcripts and history files. Sentinel scans none of these unless you list them
+(ADR-0011), because they can hold personal data.
+**Do:** decide, per path, whether Sentinel may read it. Then add absolute paths to `sentinel.toml`:
+```
+[scan]
+extra_paths = ["P:/ci-logs", "P:/builds/output"]
+```
+Then run `uv run sentinel run` and send me the status lines (`scan-extra:<name>`). Avoid listing key stores (SSH keys, cloud CLI config):
+Sentinel would fingerprint real keys there. Drive roots and your whole home folder are refused.
+
 ## Housekeeping (anytime)
 - Delete `probe-test/` and `.claude/backup-before-decision-log/` if they still exist.
 - A scheduled run every 15 minutes: `powershell -File scripts\schedule-sentinel.ps1` (creates a scheduled task; read the script first).

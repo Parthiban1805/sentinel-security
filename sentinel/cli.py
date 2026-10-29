@@ -32,7 +32,7 @@ from sentinel.inventory import assets as inventory
 from sentinel.inventory.blast import link
 from sentinel.reporting import markdown
 from sentinel.scanners import gitleaks
-from sentinel.security import fingerprint, load_key
+from sentinel.security import fingerprint, load_existing_key, load_key
 from sentinel.simulation import scenarios
 from sentinel.sources.gcp import AdcTokenProvider, GcpCollector, alias_key, normalize_credential_id
 from sentinel.sources.github import GitHubCollector
@@ -613,6 +613,19 @@ def cmd_incident_verify_ssh_key(args: argparse.Namespace) -> int:
     return 0 if passed else 1
 
 
+def cmd_incident_verify_rescan(args: argparse.Namespace) -> int:
+    home = _home(args)
+    key = load_existing_key(home)  # never a new key: it would make every credential look absent
+
+    def scan(folder: Path, mode: str) -> list[gitleaks.Finding]:
+        return gitleaks.run(folder, mode, key, home)
+
+    passed, evidence = runner.verify_rescan(_store(args), args.id, args.actor, _now(), scan)
+    print(f"{args.id}: rescan_clean {'VERIFIED' if passed else 'verification FAILED'}")
+    print(f"  evidence: {evidence}")
+    return 0 if passed else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sentinel", description="Sentinel security system")
     parser.add_argument("--version", action="version", version=f"sentinel {__version__}")
@@ -791,6 +804,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("id")
     p.add_argument("--actor", required=True)
     p = add(inc, "verify-ssh-key", cmd_incident_verify_ssh_key, help="verify SSH key removal (R6)")
+    p.add_argument("id")
+    p.add_argument("--actor", required=True)
+    p = add(inc, "verify-rescan", cmd_incident_verify_rescan, help="re-scan for the credential")
     p.add_argument("id")
     p.add_argument("--actor", required=True)
     p = add(inc, "summary", cmd_incident_summary, help="local plain summary (no AI, no network)")

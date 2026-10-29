@@ -41,6 +41,12 @@ _CREDENTIAL: tuple[_Step, ...] = (
         True,
     ),
     (
+        "rescan_clean",
+        "Re-scan every recorded location: the credential must no longer be found (system-verified)",
+        "investigate_first",
+        False,
+    ),
+    (
         "clean_history",
         "Rewrite history on a backup clone; collaborators re-clone (revocation is the real fix)",
         "approval_required",

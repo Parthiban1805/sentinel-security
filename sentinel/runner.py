@@ -20,10 +20,10 @@ from sentinel import (
     hygiene,
     probes,
 )
-from sentinel.config import ProbeHost, Settings
+from sentinel.config import ProbeHost, Settings, validate_extra_path
 from sentinel.events.schema import format_time
 from sentinel.incidents import lifecycle
-from sentinel.inventory.assets import asset_id_for
+from sentinel.inventory.assets import asset_id_for, location_asset_id, register_location
 from sentinel.scanners import gitleaks
 from sentinel.security import load_key
 from sentinel.sources.gcp import AdcTokenProvider, GcpCollector, TokenProvider
@@ -61,6 +61,40 @@ def github_token_source(home: Path) -> tuple[str, str, bool]:
 def github_token(home: Path) -> str:
     """Token from the environment, else from <home>/github-token.txt (created by the user)."""
     return github_token_source(home)[0]
+
+
+def scan_extra_location(
+    store: Store,
+    home: Path,
+    key: bytes,
+    raw: str,
+    now: datetime,
+    *,
+    allow_credential_stores: bool = False,
+    notes: list[str] | None = None,
+) -> int:
+    """Scan one opt-in location outside Git (S2): dir mode only, fingerprints only.
+
+    A path that is gone, unreadable or a symlink is a health error, never "clean". Files that
+    could not be read (permissions, symlinks, oversized JSON) are added to `notes` so the caller can
+    show a warning instead of a plain "ok". Nothing here reads Git history, runs hygiene or
+    dependency checks, or stores file content."""
+    validate_extra_path(
+        raw, allow_credential_stores=allow_credential_stores
+    )  # also for code-built Settings
+    target = Path(raw)
+    if not target.exists():
+        raise ValueError(f"extra scan location does not exist: {target.name}")
+    if target.is_symlink():
+        raise ValueError(f"extra scan location is a symlink; list the real path: {target.name}")
+    gaps = gitleaks.coverage(target)
+    asset_id = register_location(store, target, now)
+    found = gitleaks.run(target, "dir", key, home)
+    if gaps.gaps and notes is not None:
+        notes.append(f"{gaps.gaps} item(s) not scanned in {target.name} ({gaps.describe()})")
+    canary_events, found = canaries.filter_findings(store, target, found, now)
+    stored = sum(store.add_event(e) for e in canary_events)
+    return stored + len(findings.ingest(store, asset_id, found, now))
 
 
 def run_once(
@@ -125,6 +159,26 @@ def run_once(
                 return stored_count
 
             guard(f"hygiene:{target.name}", hygiene_one)
+
+    if scan:
+        for raw in settings.extra_scan_paths:
+            name = f"scan-extra:{location_asset_id(Path(raw))}"  # name + path hash: no collisions
+            notes: list[str] = []
+            guard(
+                name,
+                partial(
+                    scan_extra_location,
+                    store,
+                    home,
+                    key,
+                    raw,
+                    now,
+                    allow_credential_stores=settings.allow_credential_stores,
+                    notes=notes,
+                ),
+            )
+            if notes and health[name] == "ok":
+                health[name] = "warn: " + notes[0]
 
     if store.docs("canaries"):  # tripwire pass over armed decoys (stat only; never reads them)
         guard("canary:check", lambda: add(canaries.check(store, now)))
@@ -330,6 +384,68 @@ def verify_ssh_key(
     lifecycle.verify(
         store, iid, "revoke_token_or_ssh_key", actor, now, passed=passed, evidence=evidence
     )
+    return passed, evidence
+
+
+ScanFn = Callable[[Path, str], list[gitleaks.Finding]]
+
+
+def verify_rescan(
+    store: Store, iid: str, actor: str, now: datetime, scan: ScanFn
+) -> tuple[bool, str]:
+    """Verify rescan_clean: re-scan each recorded location of the incident's credential.
+
+    Passes only when every scan succeeded and none still finds the credential. A scan error, a
+    missing or unrecognisable folder, or nothing to scan raises and records nothing; none of
+    these counts as proof. History locations are re-scanned in git mode, so they stay failed until
+    history is rewritten.
+
+    The result is a fact about the scanned scope only: a working-tree scan skips dependency and
+    build folders (dist, build, target, ...), and other repositories are not scanned. The caller
+    must pass a scanner keyed with the SAME fingerprint key that produced the stored finding."""
+    incident = store.get_doc("incidents", iid)
+    if incident is None:
+        raise KeyError(f"unknown incident: {iid}")
+    if not any(s["step"] == "rescan_clean" for s in incident["response_plan"]):
+        raise ValueError("this incident has no rescan_clean step (it applies to R1 incidents)")
+    cred = incident.get("cred_ref")
+    finding = store.get_doc("findings", cred) if cred else None
+    if finding is None:
+        raise ValueError("the incident has no registered credential finding to re-scan")
+    assets = {a["asset_id"]: a for a in store.assets()}
+    targets = sorted(
+        {(loc["asset_id"], "git" if loc["commit"] else "dir") for loc in finding["locations"]}
+    )
+    if not targets:
+        raise ValueError("the credential finding has no recorded location; nothing to re-scan")
+    results = []
+    passed = True
+    for asset_id, mode in targets:
+        asset = assets.get(asset_id)
+        if asset is None or asset["asset_type"] not in ("repository", "scan_location"):
+            raise ValueError(
+                f"{asset_id} is not a known repository or scan location; cannot re-scan"
+            )
+        raw = (asset.get("attributes") or {}).get("path")
+        if not raw or not Path(raw).is_absolute():
+            raise ValueError(f"asset {asset_id} has no absolute local path recorded")
+        folder = Path(raw)
+        if not folder.exists():  # a scan location may be a single file
+            raise ValueError(f"the folder for {asset_id} no longer exists; nothing was verified")
+        if mode == "git" and not (folder / ".git").exists():
+            raise ValueError(f"the folder for {asset_id} is not a Git repository")
+        gaps = gitleaks.coverage(folder) if mode == "dir" else gitleaks.Coverage()
+        found = any(f.cred_ref == cred for f in scan(folder, mode))
+        where = "history" if mode == "git" else "working tree, build folders skipped"
+        if not found and gaps.gaps:
+            # Files that could not be read might hold the credential: absent proves nothing.
+            passed = False
+            results.append(f"{asset_id} ({where}): INCONCLUSIVE, not scanned: {gaps.describe()}")
+            continue
+        passed = passed and not found
+        results.append(f"{asset_id} ({where}): {'STILL FOUND' if found else 'absent'}")
+    evidence = f"re-scan at {format_time(now)} (scanned scope only): " + "; ".join(results)
+    lifecycle.verify(store, iid, "rescan_clean", actor, now, passed=passed, evidence=evidence)
     return passed, evidence
 
 
