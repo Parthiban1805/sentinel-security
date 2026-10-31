@@ -356,3 +356,129 @@ def r8_workflow_change_before_release(events: list[Event], ctx: Context) -> list
             )
         )
     return matches
+
+
+def _episode(base: str, events: list[Event], ctx: Context) -> list[Event]:
+    """Events of a new episode: only those after the last CLOSED incident for `base`, so a closed
+    incident never silences later activity, while an open one is not duplicated."""
+    closed = ctx.closed_episodes.get(base)
+    if closed is None:
+        return events
+    cut = datetime.fromisoformat(closed.replace("Z", "+00:00"))
+    return [e for e in events if _ts(e) > cut]
+
+
+def _group_key(base: str, is_test: bool) -> str:
+    return f"{base}:test" if is_test else base  # a test event never masks a real one
+
+
+def r5b_repeated_agent_denials(events: list[Event], ctx: Context) -> list[Match]:
+    """At least r5b_count blocked agent actions in one session within r5b_window (S11).
+
+    One incident per session episode, however many denials follow. A single denial (R5a) never
+    matches. Denials without a session id share an `unknown` bucket per agent asset."""
+    count, window = ctx.config.r5b_count, ctx.config.r5b_window
+    groups: dict[str, list[Event]] = {}
+    for e in events:
+        if e["event_type"] != "agent_tool_denied":
+            continue
+        session = str((e.get("attributes") or {}).get("session", "")) or f"unknown@{e['asset_id']}"
+        groups.setdefault(_group_key(f"R5b:{session}", e["is_test"]), []).append(e)
+    matches: list[Match] = []
+    for base, group in sorted(groups.items()):
+        denials = sorted(_episode(base, group, ctx), key=lambda e: (_ts(e), e["event_id"]))
+        burst = next(
+            (
+                denials[i : i + count]
+                for i in range(len(denials) - count + 1)
+                if _ts(denials[i + count - 1]) - _ts(denials[i]) <= window
+            ),
+            None,
+        )
+        if burst is None:
+            continue
+        involved = [e for e in denials if _ts(e) >= _ts(burst[0])]  # the burst and what followed
+        session = str(burst[0]["attributes"].get("session", "")) or "unknown"
+        rules = sorted({str(e["attributes"].get("rule", "?")) for e in involved})
+        classes = sorted({str(e["attributes"].get("target_class", "?")) for e in involved})
+        minutes = (_ts(burst[-1]) - _ts(burst[0])).total_seconds() / 60
+        matches.append(
+            Match(
+                rule_id="R5b",
+                key=f"{base}@{burst[0]['time']}",
+                title=f"{len(involved)} blocked agent actions in one session",
+                severity_floor="medium",
+                confidence="low",
+                facts=(
+                    f"{count} actions were blocked by the guard hooks within {minutes:.0f} "
+                    f"minutes in agent session {session} ({len(involved)} in total from "
+                    f"{burst[0]['time']}).",
+                    f"Rules hit: {', '.join(rules)}; classes: {', '.join(classes)}.",
+                ),
+                hypotheses=(
+                    "The agent may have been steered by untrusted input (prompt injection) or may "
+                    "be pursuing an unsafe goal. Equally plausible until the session's inputs are "
+                    "reviewed: harmless commands blocked by keyword matching.",
+                ),
+                event_ids=tuple(e["event_id"] for e in involved),
+                asset_id=burst[0]["asset_id"],
+                first_time=burst[0]["time"],
+                last_time=involved[-1]["time"],
+                is_test=burst[0]["is_test"],
+            )
+        )
+    return matches
+
+
+def _approved_prefix(tool: str, approved: frozenset[str]) -> bool:
+    """Exact match on `mcp__<approved name>__`: no slugging, no guessing where the name ends."""
+    return any(tool.startswith(f"mcp__{name}__") for name in approved)
+
+
+def r5c_unapproved_mcp_server(events: list[Event], ctx: Context) -> list[Match]:
+    """An MCP tool call to a server nobody approved (S12). Active only in allowlist mode, i.e.
+    once at least one MCP server was approved; one incident per server episode."""
+    if not ctx.approved_mcp_servers:
+        return []
+    groups: dict[str, list[Event]] = {}
+    for e in events:
+        if e["event_type"] != "agent_tool_allowed":
+            continue
+        attrs = e.get("attributes") or {}
+        tool = str(attrs.get("tool", ""))
+        if not tool.startswith("mcp__") or _approved_prefix(tool, ctx.approved_mcp_servers):
+            continue
+        server = str(attrs.get("mcp_server") or tool)
+        groups.setdefault(_group_key(f"R5c:{server}", e["is_test"]), []).append(e)
+    matches: list[Match] = []
+    for base, group in sorted(groups.items()):
+        calls = sorted(_episode(base, group, ctx), key=lambda e: (_ts(e), e["event_id"]))
+        if not calls:
+            continue
+        name = str(calls[0]["attributes"].get("mcp_server", "?"))
+        tools = sorted({str(e["attributes"].get("mcp_tool", "?")) for e in calls})
+        matches.append(
+            Match(
+                rule_id="R5c",
+                key=f"{base}@{calls[0]['time']}",
+                title=f"Agent used MCP server '{name}', which is not approved",
+                severity_floor="high",
+                confidence="medium",
+                facts=(
+                    f"The agent called {len(calls)} tool(s) of MCP server '{name}' "
+                    f"({', '.join(tools)}) from {calls[0]['time']}; no approved MCP server has "
+                    "exactly this name.",
+                ),
+                hypotheses=(
+                    "The server may be untrusted or impersonate a trusted one; it may also be a "
+                    "legitimate server that nobody has approved yet (user-scope servers and "
+                    "claude.ai connectors are never visible to the inventory).",
+                ),
+                event_ids=tuple(e["event_id"] for e in calls),
+                asset_id=calls[0]["asset_id"],
+                first_time=calls[0]["time"],
+                last_time=calls[-1]["time"],
+                is_test=calls[0]["is_test"],
+            )
+        )
+    return matches

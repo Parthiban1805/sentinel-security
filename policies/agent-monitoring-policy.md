@@ -1,7 +1,7 @@
-# AI agent activity logging: policy (PROPOSED, needs owner sign-off)
+# AI agent activity logging: policy (APPROVED by the owner on 2026-10-31)
 
 Applies to the tamper-evident decision log written by the Claude Code hooks (`docs/patches/agent-decision-log/`, ADR-0007).
-Status: **proposed**. Not in force until the owner approves it below.
+Status: **approved as written** (owner sign-off below, 2026-10-31). In force on the owner's machine only (section 6).
 
 ## 1. Purpose (and what it is not for)
 - **Purpose:** detect when an AI coding agent is steered into unsafe actions (credential reads, exfiltration, history rewrites,
@@ -39,6 +39,7 @@ legal basis, and an agreed contact for questions. This document is the starting 
 Reviewed every 6 months or whenever the recorded fields change (a change to section 2 needs a new ADR).
 
 ## Sign-off
-Owner: ____________________  Date: ____________  Decision: [ ] approved as written  [ ] approved with changes  [ ] rejected
+Owner: Parthiban  Date: 2026-10-31  Decision: [x] approved as written  [ ] approved with changes  [ ] rejected
+(Approval given in the Claude Code chat in answer to a yes/no question; recorded here by Claude.)
 
 All generated content requires human review before use.

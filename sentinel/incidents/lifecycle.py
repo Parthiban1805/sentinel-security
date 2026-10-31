@@ -104,6 +104,7 @@ def _build(
         unknowns.append("Credential is not linked to any asset: blast radius is unknown.")
     return {
         "id": iid,
+        "key": match.key,  # dedup key; episode-based rules use it to see closed incidents
         "rule_id": match.rule_id,
         "title": match.title,
         "status": "open",

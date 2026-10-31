@@ -28,12 +28,15 @@ from sentinel.events.schema import SchemaError, format_time
 from sentinel.incidents import lifecycle, summary, watch
 from sentinel.incidents.lifecycle import IncidentError
 from sentinel.incidents.response import DryRunAdapter
+from sentinel.inventory import agents as agent_inventory
 from sentinel.inventory import assets as inventory
 from sentinel.inventory.blast import link
 from sentinel.reporting import markdown
 from sentinel.scanners import gitleaks
 from sentinel.security import fingerprint, load_existing_key, load_key
 from sentinel.simulation import scenarios
+from sentinel.sources.agent import CURSOR_KEY as AGENT_CURSOR_KEY
+from sentinel.sources.agent import AgentLogSource
 from sentinel.sources.gcp import AdcTokenProvider, GcpCollector, alias_key, normalize_credential_id
 from sentinel.sources.github import GitHubCollector
 from sentinel.sources.http import HttpClient, HttpError
@@ -123,6 +126,24 @@ def cmd_fingerprint(args: argparse.Namespace) -> int:
 
 
 # inventory ---------------------------------------------------------------------
+def cmd_inventory_agents(args: argparse.Namespace) -> int:
+    store, workspace, now = _store(args), Path(args.workspace), _now()
+    agent = agent_inventory.register_agent(store, workspace, now)
+    servers, skipped = agent_inventory.discover_mcp(store, workspace, now)
+    print(f"agent: {agent}")
+    print(f"MCP servers from {agent_inventory.MCP_CONFIG}: {len(servers)}")
+    for asset_id in servers:
+        print(f"  {asset_id}")
+    if skipped:
+        print(f"  skipped {skipped} server name(s) with unusual characters (not stored)")
+    print(
+        "Approve a server with `inventory set <id> --actor <you> --approve`. Rule R5c starts "
+        "alerting on unapproved servers once at least one server is approved. Servers set up "
+        "at user scope are not visible here."
+    )
+    return 0
+
+
 def cmd_inventory_discover(args: argparse.Namespace) -> int:
     added = inventory.discover(_store(args), Path(args.root), _now())
     print(f"registered {len(added)} new repo asset(s), all unowned until you assign owners")
@@ -268,8 +289,20 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 
 def cmd_inventory_set(args: argparse.Namespace) -> int:
+    store = _store(args)
+    target = next((a for a in store.assets() if a["asset_id"] == args.asset), None)
+    if (
+        (args.approve or args.unapprove)
+        and target
+        and target["asset_type"]
+        in (
+            "mcp_server",
+            "ai_agent",
+        )
+    ):
+        _require_human("approving an MCP server or AI agent")
     asset = inventory.update_asset(
-        _store(args),
+        store,
         args.asset,
         actor=args.actor,
         now=_now(),
@@ -330,8 +363,41 @@ def cmd_agentlog_reset(args: argparse.Namespace) -> int:
     if answer.strip() != "RESET":
         print("cancelled")
         return 1
-    target = agentlog.archive_log(_store(args), _home(args), format_time(_now()), reason)
+    store, home = _store(args), _home(args)
+    # Read entries not yet turned into events first, so archiving never hides a detection.
+    source = AgentLogSource()
+    try:
+        pending = source.collect(store, home, _now())
+    except ValueError as exc:  # a broken chain is archived as-is (kept for forensics)
+        print(f"not ingested before archiving: {exc}")
+    else:
+        stored = sum(store.add_event(e) for e in pending)
+        source.commit(store)
+        print(f"ingested {stored} pending event(s) before archiving")
+    target = agentlog.archive_log(store, home, format_time(_now()), reason)
+    store.delete_doc("cursors", AGENT_CURSOR_KEY)  # the next chain is read from its start
     print(f"archived to {target}" if target else "no log to archive")
+    return 0
+
+
+def _require_human(action: str) -> None:
+    """Approvals and pins decide what Sentinel trusts; an agent must not make them for itself."""
+    if not sys.stdin.isatty():
+        raise ValueError(f"{action} needs a human at an interactive terminal (refusing)")
+
+
+def cmd_agentlog_pin_hooks(args: argparse.Namespace) -> int:
+    _require_human("pinning the reviewed hooks")
+    home = _home(args)
+    answer = input(
+        "Pin the hooks now installed in .claude/hooks and the hooks block of "
+        ".claude/settings.json as REVIEWED? Type PIN to confirm: "
+    )
+    if answer.strip() != "PIN":
+        print("cancelled")
+        return 1
+    pin = runner.pin_agent_hooks(_store(args), home.resolve().parent, args.actor, _now())
+    print(f"pinned {len(pin['files'])} hook file(s) and the settings hooks block at {pin['time']}")
     return 0
 
 
@@ -591,11 +657,21 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"  {name}: {state}")
     for line in result["alerts"]:
         print(f"  ALERT {line}")
+    for line in result.get("notes", []):
+        print(f"  NOTE  {line}")
     return 0 if all(s == "ok" for s in result["health"].values()) else 2
 
 
 def cmd_incident_verify_key(args: argparse.Namespace) -> int:
-    collector = GcpCollector(HttpClient(), AdcTokenProvider())
+    from google.auth.exceptions import GoogleAuthError
+
+    try:
+        collector = GcpCollector(HttpClient(), AdcTokenProvider())
+    except GoogleAuthError as exc:  # type only: the OAuth error text is never printed
+        raise ValueError(
+            f"Google credentials unavailable ({type(exc).__name__}); "
+            "run `gcloud auth application-default login`"
+        ) from None
     passed, evidence = runner.verify_key(_store(args), args.id, args.actor, _now(), collector)
     print(f"{args.id}: revoke_credential {'VERIFIED' if passed else 'verification FAILED'}")
     print(f"  evidence: {evidence}")
@@ -622,6 +698,15 @@ def cmd_incident_verify_rescan(args: argparse.Namespace) -> int:
 
     passed, evidence = runner.verify_rescan(_store(args), args.id, args.actor, _now(), scan)
     print(f"{args.id}: rescan_clean {'VERIFIED' if passed else 'verification FAILED'}")
+    print(f"  evidence: {evidence}")
+    return 0 if passed else 1
+
+
+def cmd_incident_verify_agent_hooks(args: argparse.Namespace) -> int:
+    passed, evidence = runner.verify_agent_hooks(
+        _store(args), args.id, args.actor, _now(), _home(args)
+    )
+    print(f"{args.id}: verify_agent_hooks {'VERIFIED' if passed else 'verification FAILED'}")
     print(f"  evidence: {evidence}")
     return 0 if passed else 1
 
@@ -670,6 +755,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p = add(inv, "discover", cmd_inventory_discover, help="register Git repos under a folder")
     p.add_argument("root")
+    p = add(inv, "agents", cmd_inventory_agents, help="register the AI agent and MCP servers")
+    p.add_argument("--workspace", default=".", help="project folder (default: current)")
     p = add(inv, "import", cmd_inventory_import, help="import asset records (JSON list)")
     p.add_argument("file")
     add(inv, "check", cmd_inventory_check, help="list unowned/unapproved/unmonitored assets")
@@ -698,6 +785,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p = add(ag, "verify", cmd_agentlog_verify, help="verify the tamper-evident hook decision log")
     p.add_argument("--file", help="log path (default: <home>/agent-decisions.jsonl)")
+    p = add(ag, "pin-hooks", cmd_agentlog_pin_hooks, help="record the reviewed hooks (human only)")
+    p.add_argument("--actor", required=True)
     p = add(
         ag, "reset", cmd_agentlog_reset, help="archive the log and start a new chain (human only)"
     )
@@ -807,6 +896,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("id")
     p.add_argument("--actor", required=True)
     p = add(inc, "verify-rescan", cmd_incident_verify_rescan, help="re-scan for the credential")
+    p.add_argument("id")
+    p.add_argument("--actor", required=True)
+    p = add(
+        inc,
+        "verify-agent-hooks",
+        cmd_incident_verify_agent_hooks,
+        help="hooks and log intact (R5b)",
+    )
     p.add_argument("id")
     p.add_argument("--actor", required=True)
     p = add(inc, "summary", cmd_incident_summary, help="local plain summary (no AI, no network)")

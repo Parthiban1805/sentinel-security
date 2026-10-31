@@ -21,7 +21,12 @@
     denial with a stable rule id and no raw command or path, still deny when logging fails, protect Sentinel's state dir
     (BG-14, PF-17), and the hash chain detects edits, deletions, forged appends, tail truncation and history rewrite
     (`tests/sentinel/test_hook_patches.py`, 64 tests; see ADR-0007 and `docs/patches/agent-decision-log/README.md`).
-  - [ ] Incident from repeated denials in one session (rule R5b): not built yet (next release, after real log data exists)
+  - [x] Incident from repeated denials in one session (rule R5b, **built in v0.3b**, ADR-0012): `sentinel run` reads the verified log
+    (`sentinel/sources/agent.py`), turns each denial into an `agent_tool_denied` event, and R5b opens ONE incident per session when 3 or
+    more denials fall within 30 minutes (both `[confirm]` on real data). A single denial (R5a) opens nothing. A tampered log emits no
+    events. Tests: `tests/sentinel/test_r5.py`, `tests/sentinel/test_agent_source.py` (simulated and hand-built chained logs).
+  - [x] Steered-agent simulation (12 denials) raises one incident, not a flood (product-plan exit criterion, simulated input).
+  - [ ] R5b demonstrated end to end on a REAL session: not yet (the log holds 17 entries; thresholds still to be tuned on real data)
 - **Result 2026-10-27:** original hooks: 41 passed, 2 xfailed (the documented gaps). Patched hooks: same lists pass plus the new protections.
 - **Metrics captured:** block rate for forbidden set = 100%; known bypass classes = 2.
 - **Cleanup:** none.

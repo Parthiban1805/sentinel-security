@@ -17,7 +17,8 @@ denials (this project saw them for words like "curl" and "SSH" inside ordinary t
 4. If `doctor` still says "no decision log yet" after a new session: re-run `docs\patches\agent-decision-log\apply-patch.bat`, start another session.
 
 ## 2. GitHub token: Administration read
-**Status: done** (screenshot 2026-10-27 shows "Read access to administration, code, and metadata").
+**Status: done.** Token replaced on 2026-10-31 after the old one was rejected (HTTP 401): fine-grained, one repository, read-only
+Administration, Contents, Metadata and Git SSH keys, expires 2027-01-29 (set a reminder). `doctor` clean, `audit` reaches GitHub.
 Result: `sentinel audit` still reports `SS0` (secret-scanning settings not visible) and `BP1` (no branch protection). Both are most likely the
 free plan for private repositories (hypothesis; GitHub does not say so). Nothing further is needed unless you upgrade the plan or move the repo.
 
@@ -37,7 +38,7 @@ free plan for private repositories (hypothesis; GitHub does not say so). Nothing
 File: `policies/agent-monitoring-policy.md` (one page, status "proposed").
 Defaults: log only blocked actions, MCP calls and session starts (no commands, paths or prompts); stays on this machine; 90-day retention;
 notice to employees before any rollout to other people.
-**Do:** reply "approve defaults, owner <your name>" (I record the sign-off) or tell me what to change (for example the retention period).
+**Status: done.** Approved as written by Parthiban on 2026-10-31 (recorded in the policy file).
 
 ## 5. Review decisions and the old alert
 **ADRs** (`docs/adr/`), all "proposed". Accept by changing the `Status:` line to `accepted`, or tell me and I will:
@@ -61,6 +62,7 @@ uv run sentinel incident close INC-63C56A65 --actor <your-name>
 It should only add the secret-scan workflow with the pinned gitleaks download. If anything looks unfamiliar, do not close it; tell me.
 
 ## 6. Choose the places outside Git to scan (S2, v0.5)
+**Status: skipped for now** (owner choice, 2026-10-31). Nothing outside Git is scanned. Pick this up any time.
 **Why:** keys also end up in CI logs, build output, agent transcripts and history files. Sentinel scans none of these unless you list them
 (ADR-0011), because they can hold personal data.
 **Do:** decide, per path, whether Sentinel may read it. Then add absolute paths to `sentinel.toml`:
@@ -70,6 +72,18 @@ extra_paths = ["P:/ci-logs", "P:/builds/output"]
 ```
 Then run `uv run sentinel run` and send me the status lines (`scan-extra:<name>`). Avoid listing key stores (SSH keys, cloud CLI config):
 Sentinel would fingerprint real keys there. Drive roots and your whole home folder are refused.
+
+## 7. Agent visibility (v0.3b): two owner actions
+1. **Protect two more paths** (they are protected files, so you apply this): add `.claude/settings.local.json` and
+   `docs/patches/**` to the `deny` list in `.claude/settings.json` and to the protect-sensitive-files hook. Reason: an agent that can
+   write a local settings file could switch the hooks off (ADR-0012, review amendment).
+2. **Pin the reviewed hooks** in an interactive terminal, after the step above:
+   ```
+   uv run sentinel agentlog pin-hooks --actor Parthiban
+   ```
+   Type PIN to confirm. Repeat whenever you change the hooks or the `hooks` block of `.claude/settings.json` on purpose.
+Then approve the MCP servers you trust: `uv run sentinel inventory agents`, and for each one
+`uv run sentinel inventory set mcp-<name> --actor Parthiban --approve` (interactive terminal).
 
 ## Housekeeping (anytime)
 - Delete `probe-test/` and `.claude/backup-before-decision-log/` if they still exist.

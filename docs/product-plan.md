@@ -86,7 +86,14 @@ Goal: what exists is correct, honest and proven before more is built on it.
 - **Exit:** coverage matrix generated in CI; log tamper test fails the chain check when a line is edited or removed;
   7 days of scheduled runs with no collector errors; if Google is in scope, one real R1 path on a throwaway key.
 
-### v0.3b: Agent visibility  [M]
+### v0.3b: Agent visibility  [M]  (status 2026-10-31: built on simulated input; monitoring policy approved; ADR-0012)
+**Built:** `sentinel/sources/agent.py` (verified log -> `agent_tool_denied` / `agent_tool_allowed`; nothing from a tampered log;
+chain-aware cursor), `sentinel inventory agents` (`ai_agent` + `mcp_server` from `.mcp.json`, name/transport/host only), rules R5a
+(context only), R5b (3 denials in a session within 30 min, one Medium incident per session) and R5c (unapproved MCP server, active
+once one server is approved, one High incident per server), R5b/R5c response plans, `incident verify-agent-hooks` (installed hooks
+equal a human-made pin, settings not overriding them, chain intact), S11 update and S12 doc, coverage rows. The security review
+("Block") found 13 issues; all code findings fixed (ADR-0012 amendment). 533 tests. **Not yet:** R5b/R5c seen on a real session;
+thresholds tuned on real data (the log held 17 entries); owner actions in `pending-tasks.md` item 7.
 Goal: see AI-agent behaviour. Only after v0.3a, and after a week of real log data shows the false-positive rate.
 - `sentinel/sources/agent.py`: reads the log by offset (handles rotation and truncation), validates the chain,
   emits `agent_tool_denied` and `agent_tool_allowed` events, uses the deferred-state commit pattern, isolated like other sources.

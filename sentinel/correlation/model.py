@@ -9,6 +9,8 @@ class Config:
     spend_multiple: float = 3.0  # R4 threshold X [confirm]
     r6_window: timedelta = timedelta(hours=1)
     r8_window: timedelta = timedelta(hours=24)  # [confirm]
+    r5b_count: int = 3  # denials in one agent session [confirm on real log data]
+    r5b_window: timedelta = timedelta(minutes=30)  # [confirm on real log data]
 
 
 @dataclass(frozen=True)
@@ -18,6 +20,11 @@ class Context:
     revoked_verified: frozenset[str] = frozenset()
     # cred_ref -> UTC time ("...Z") the revocation was verified; used by R11.
     revoked_verified_at: dict[str, str] = field(default_factory=dict)
+    # Exact names of MCP servers a person approved; R5c is active only when this is non-empty.
+    approved_mcp_servers: frozenset[str] = frozenset()
+    # Episode base key (incident key before '@') -> time its latest incident was CLOSED, so a
+    # closed incident never silences later activity (R5b, R5c).
+    closed_episodes: dict[str, str] = field(default_factory=dict)
     config: Config = field(default_factory=Config)
 
 

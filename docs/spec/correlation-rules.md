@@ -8,7 +8,7 @@ Deterministic, explainable. AI summarizes; it never makes blocking decisions.
 | R2 | Workflow change adds network calls or secret refs, by actor outside usual maintainers | High | S8, S10 |
 | R3 | New dependency installed, then same machine/runner accesses credential files or unexpected egress | High | S7 |
 | R4 | API spend above X times the 7-day baseline [confirm X] | High; quota cap if pre-approved | S0 |
-| R5 | Agent calls tool outside allowlist or touches secrets it does not normally use | High | S11, S12 |
+| R5 | Agent calls tool outside allowlist or touches secrets it does not normally use (built as R5a/R5b/R5c, see below) | Medium (R5b) / High (R5c) | S11, S12 |
 | R6 | GitHub login from new location, then new token or SSH key within 1 hour | Critical | S4, S6 |
 | R7 | Any canary credential or decoy resource used | Critical | All |
 | R8 | Deployment workflow changed shortly before off-pattern release | High | S10 |
@@ -97,6 +97,61 @@ New rules: use the spec format in `.claude/skills/correlation-rule-authoring/SKI
   the file (404/403/410 or a 200 that no longer matches). A network error proves nothing and fails the step.
 - **False positives:** a deliberately public sample file that happens to look like an env file. **Known gaps:** fixed path list;
   only the first 512 bytes are inspected; hosts behind authentication or a WAF that hides the path from the probe are not seen.
+
+## Implemented in v0.3b (agent visibility; tests in `tests/sentinel/test_r5.py`, ADR-0012)
+
+Source: `sentinel/sources/agent.py` turns the tamper-evident hook log (ADR-0007) into events. It refuses to emit anything
+from a log whose chain or anchor fails (the `agentlog` health check raises the alert instead). The log holds no command text,
+paths, prompts or arguments (policy `policies/agent-monitoring-policy.md`, approved 2026-10-31): only time, a hashed session
+id, the tool name, a stable rule id, a class and a keyed target fingerprint.
+
+| Hook decision | Event | Severity |
+|---|---|---|
+| `deny` (a guard hook blocked a call) | `agent_tool_denied` | low |
+| `allow_mcp` (an MCP tool was called) | `agent_tool_allowed`, with `attributes.mcp_server` parsed from `mcp__<server>__<tool>` | info |
+| `session_start` (heartbeat) | none (proves logging was on; counted, not an event) | |
+
+### R5a: a single blocked action (context only, NO incident)
+- **Why no incident:** the guard hooks match keywords, so harmless commands are blocked too (this project's own sessions were
+  blocked for the word "ssh" inside a search pattern and for a cloud CLI command the owner had asked for). One block says little.
+- **Effect:** the event is stored and counts toward R5b; it appears in the incident record if R5b fires.
+
+### R5b: repeated blocked actions in one agent session (S11)
+- **Inputs:** `agent_tool_denied` (`attributes.session`, `rule`, `target_class`, `tool`). **Join key:** `attributes.session` (a hash of
+  the session id; the raw id is never stored).
+- **Window:** `r5b_window` = 30 minutes `[confirm]`; **count:** `r5b_count` = 3 `[confirm]`. Justification: a steered agent tends to
+  retry a blocked goal several times in quick succession; isolated keyword hits are spread out. Both values are configurable and must
+  be tuned on real log data (product plan, v0.3b).
+- **Condition:** at least `r5b_count` denials in the same session whose times fit inside one `r5b_window`.
+  Pseudocode: `for session: sort denials by time; if any i with t[i + count - 1] - t[i] <= window: match`.
+- **Output:** ONE incident per session (dedup key `R5b:<session>`), however many denials follow, so a steered agent raises one incident,
+  not a flood. Severity floor medium, confidence low. **Facts:** the number of denials, the time span, the rule ids and classes hit.
+  **Hypothesis (not proven):** the agent may have been steered by untrusted input (prompt injection) or may be pursuing an unsafe goal;
+  repeated keyword false positives are an equally plausible explanation until the session's inputs are reviewed.
+- **Response plan:** review the session's untrusted inputs (investigate), end the session and revoke any credential it held (approval),
+  confirm the hooks and the log are intact (investigate; verification evidence: installed hooks unchanged, chain intact, credential
+  actually revoked or session ended, never "no more denials").
+- **False positives:** a human repeatedly asking the agent for something the guard blocks (as happened in this project). **Known gaps:**
+  only actions that a hook blocks are visible; allowed ordinary calls are deliberately not logged; a gateway (v0.7) is needed for full
+  visibility (rule R9).
+
+### R5c: an MCP tool call to a server that is not approved (S12)
+- **Inputs:** `agent_tool_allowed` with `attributes.mcp_server`; `Context.approved_mcp_servers` from `mcp_server` assets with
+  `approved = true`. **Join key:** the server name. **Window:** none (a single call is enough).
+- **Allowlist mode:** R5c is active only once at least one `mcp_server` asset has been approved (`inventory set <id> --approve`). Before
+  that, every call would match, which is noise rather than detection.
+- **Matching (after the 2026-10-31 review):** a call counts as approved only if its tool name starts with `mcp__<exact approved
+  name>__`; names are never lower-cased or slugged, so a look-alike name never inherits an approval. Changing an approved server's
+  transport, host or command clears its approval.
+- **Episodes (R5b and R5c):** the key is `<base>@<first event time>`; once an incident for a base is closed, only later events count,
+  so a closed incident never silences later activity. Test events are grouped apart from real ones (`<base>:test`).
+- **Output:** ONE incident per server episode (dedup key `R5c:<server>@<time>`). Severity floor high, confidence medium. **Fact:** the agent called a tool
+  of a server that nobody approved. **Hypothesis:** the server may be untrusted or impersonating a trusted one; it may also simply be a
+  server the owner forgot to approve.
+- **Response plan:** review the server (owner, source, version) and approve it or remove it (approval), review what the agent sent to it
+  (investigate), rotate anything it could read (approval).
+- **Known gaps:** servers configured at user scope are invisible to the inventory (that configuration holds credentials and is off
+  limits), so they always count as "not approved" until the owner registers them by hand; claude.ai connectors appear as servers too.
 
 ### Data-source limits (facts, `docs/research/collectors.md`)
 - R1 with Google data: usage = per-key request volume above max(3x 7-day hourly mean, floor), or any use of a

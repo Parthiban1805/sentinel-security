@@ -185,3 +185,60 @@ def canary(asset_id: str, now: datetime) -> list[dict[str, Any]]:
             is_test=True,
         )
     ]
+
+
+def steered_agent(
+    session: str, asset_id: str, now: datetime, count: int = 4
+) -> list[dict[str, Any]]:
+    """S11 (R5b): an agent session retries blocked actions several times in quick succession."""
+    tries = [("BG-03", "network_tool"), ("PF-02", "credential_file"), ("BG-03", "network_tool")]
+    return [
+        make_event(
+            event_type="agent_tool_denied",
+            source="agent_hook",
+            asset_id=asset_id,
+            time=now + timedelta(minutes=2 * i),
+            severity="low",
+            confidence="high",
+            evidence_ref=f"simulated/agentlog/{i}",
+            is_test=True,
+            attributes={
+                "session": session,
+                "tool": "Bash",
+                "rule": tries[i % len(tries)][0],
+                "target_class": tries[i % len(tries)][1],
+                "target_fp": f"{i:016x}",
+                "decision": "deny",
+            },
+        )
+        for i in range(count)
+    ]
+
+
+def unapproved_mcp(server: str, asset_id: str, now: datetime) -> list[dict[str, Any]]:
+    """S12 (R5c): the agent calls a tool of an MCP server that nobody approved."""
+    from sentinel.inventory.agents import mcp_asset_id
+
+    return [
+        make_event(
+            event_type="agent_tool_allowed",
+            source="agent_hook",
+            asset_id=asset_id,
+            time=now,
+            severity="info",
+            confidence="high",
+            evidence_ref="simulated/agentlog/mcp",
+            is_test=True,
+            attributes={
+                "session": "5e55105e55105e55",
+                "tool": f"mcp__{server}__read_file",
+                "rule": "MCP-01",
+                "target_class": "mcp_tool",
+                "target_fp": "",
+                "decision": "allow_mcp",
+                "mcp_server": server,
+                "mcp_tool": "read_file",
+                "mcp_asset_id": mcp_asset_id(server),
+            },
+        )
+    ]

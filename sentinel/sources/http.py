@@ -41,15 +41,38 @@ class HttpError(RuntimeError):
 
 
 def error_hint(body: bytes) -> str | None:
-    """Classify a GitHub-style error body into a fixed label. The text is never stored or shown."""
-    text = body[:400].decode("utf-8", errors="ignore").lower()
+    """Classify a GitHub or Google error body into a fixed label (the text is never kept or shown).
+
+    Google reasons are checked before the generic PERMISSION_DENIED that usually comes with them."""
+    text = body[:2048].decode("utf-8", errors="ignore").lower()
     if "upgrade to github pro" in text or "make this repository public" in text:
         return "plan_limit"
     if "resource not accessible" in text:
         return "no_permission"
     if "branch not protected" in text:
         return "not_protected"
+    if "service_disabled" in text:
+        return "api_disabled"
+    if "access_token_scope_insufficient" in text:
+        return "scope_insufficient"
+    if "user_project_denied" in text or "quota project" in text:
+        return "quota_project"
+    if "rate_limit_exceeded" in text or "ratelimitexceeded" in text:
+        return "rate_limited"
+    if "permission_denied" in text:
+        return "no_permission"
     return None
+
+
+# What to do next, per hint (fixed text; shown in health instead of the provider's message).
+HINT_ADVICE = {
+    "api_disabled": "the API is not enabled on this project (enable it in the Cloud console)",
+    "scope_insufficient": "the login does not grant this access (re-run the gcloud login)",
+    "quota_project": "no usable quota project (run `gcloud auth application-default "
+    "set-quota-project <project-id>`)",
+    "rate_limited": "rate limited by the provider (try again later)",
+    "no_permission": "this account lacks a permission or role for this call",
+}
 
 
 @dataclass(frozen=True)
@@ -170,13 +193,13 @@ class HttpClient:
                 self._sleep(min(2**attempt, 30))
                 continue
             if resp.status >= 300:  # includes redirects, which are never followed
-                note = (
-                    " (the token was rejected: expired, revoked or wrong)"
-                    if resp.status == 401
-                    else ""
-                )
-                raise HttpError(
-                    f"HTTP {resp.status} from {where}{note}", resp.status, error_hint(resp.body)
-                )
+                hint = error_hint(resp.body)
+                if resp.status == 401:
+                    note = " (the token was rejected: expired, revoked or wrong)"
+                elif hint in HINT_ADVICE and "googleapis.com" in where:
+                    note = f" ({HINT_ADVICE[hint]})"
+                else:
+                    note = ""
+                raise HttpError(f"HTTP {resp.status} from {where}{note}", resp.status, hint)
             return resp
         raise HttpError(f"retries exhausted for {where}")  # pragma: no cover

@@ -32,6 +32,7 @@ AUTO_VERIFIED_STEPS = {
     "verify_path_closed": "re-probe of the exposed path (verify-probe)",
     "revoke_token_or_ssh_key": "GitHub /user/keys listing (verify-ssh-key; SSH keys only)",
     "rescan_clean": "gitleaks re-scan of the recorded locations (verify-rescan)",
+    "verify_agent_hooks": "installed hooks match the reviewed patch, log chain intact",
 }
 
 # Which event types have a real producer today, which are simulation-only, and the rest have none.
@@ -46,6 +47,8 @@ REAL_PRODUCERS = {
     "dependency_added": "dependency snapshots (sentinel run)",
     "exposed_service": "exposure probes (sentinel probe)",
     "canary_triggered": "canary decoys (sentinel canary): copy, tamper, read; not provider use",
+    "agent_tool_denied": "agent hook decision log (sentinel run)",
+    "agent_tool_allowed": "agent hook decision log, MCP calls only (sentinel run)",
 }
 SIMULATION_ONLY = {
     "login_anomaly": "no login-history API for personal GitHub accounts",
@@ -131,6 +134,34 @@ SCENARIOS: tuple[Scenario, ...] = (
         lambda: scenarios.login_then_token("ab12cd34", "gh-demo", NOW),
         (),
         "personal GitHub accounts expose no login history; only SSH keys are collectable",
+    ),
+    Scenario(
+        "S11",
+        "Agent session retries blocked actions (possible injection)",
+        "R5b",
+        lambda: scenarios.steered_agent("5e55105e55105e55", "agent-demo", NOW),
+        ("agentlog",),
+        "agent hook decision log; only blocked actions and MCP calls are visible",
+    ),
+    Scenario(
+        "S12",
+        "Agent uses an MCP server that is not approved",
+        "R5c",
+        lambda: scenarios.unapproved_mcp("unknown-server", "agent-demo", NOW),
+        ("agentlog",),
+        "active once at least one MCP server is approved; user-scope servers are invisible",
+        setup=lambda store: store.upsert_asset(
+            {
+                "asset_id": "mcp-approved-server",
+                "asset_type": "mcp_server",
+                "name": "approved-server",
+                "owner": "demo",
+                "importance": "high",
+                "monitoring": "partial",
+                "approved": True,
+                "last_seen": format_time(NOW),
+            }
+        ),
     ),
     Scenario(
         "All",

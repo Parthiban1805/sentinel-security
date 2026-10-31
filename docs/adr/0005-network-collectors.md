@@ -12,8 +12,15 @@ destination is documented in the module README and an ADR. Research: `docs/resea
   backoff, pagination.
 - Path denylist: any URL containing `getKeyString` (or `:getKeyString`) is refused before sending.
 - Credentials: GitHub fine-grained read-only token from env `SENTINEL_GITHUB_TOKEN`; Google Application Default
-  Credentials with read-only scope `cloud-platform.read-only`. Created by the user, never by the agent; never logged,
-  stored, or included in error messages (errors carry status code and host only).
+  Credentials (`authorized_user` only). Created by the user, never by the agent; never logged, stored, or included in
+  error messages (errors carry status code and host only). **Scopes (corrected twice on 2026-10-31):** Sentinel
+  requests `cloud-platform.read-only` and `monitoring.read`. google-auth sends the requested scopes with every token
+  refresh (checked in the google-auth 2.36.0 source: `google/oauth2/credentials.py` and `google/oauth2/_client.py`),
+  so the access token IS narrowed to these read-only scopes. (The pre-live review had said the opposite; that claim
+  was wrong and was briefly recorded here.) Sentinel's HttpClient (GET only, host allowlist) is a second, independent
+  limit. `monitoring.read` was added after the first live run: Cloud Monitoring answered 403 to a token carrying only
+  `cloud-platform.read-only` on all three projects of an Owner account, while API Keys accepted it (observed fact; the
+  reason, that Monitoring does not accept that scope, is a hypothesis until the next run passes).
 - Stored data is minimal: ids, timestamps, counts, flags and fingerprints. No public key bodies, diffs, request
   bodies or tokens.
 - Each collector has a README naming its destinations and scopes.
@@ -50,6 +57,36 @@ destination is documented in the module README and an ADR. Research: `docs/resea
   `authorized_user`), outside HttpClient's allowlist; the free-text screen is a heuristic; `alerts.log` and the token
   file have default Windows permissions (no ACL hardening); how GitHub's `since` filter treats backdated commits is
   unverified against its docs.
+
+## Amendment after the 2026-10-31 pre-live review of the Google collector
+Found before the collector's first run on real data; all fixed and tested in `tests/sentinel/test_gcp.py`.
+- **First contact learns, it does not alert.** With no cursor, the lookback window (7 days) is added to the baseline and no
+  volume anomaly is raised; a NOTE says so. Without this, normal busy use would have looked anomalous (no baseline yet) and
+  opened incidents for days of ordinary traffic. Use of a key whose revocation was verified still alerts on the first run.
+  **Limit (fact):** abuse already running before the first run is learned as normal.
+- **Warm-up is bounded:** warm-up hours are learned (still flagged above floor x multiple, with confidence `low`), so a busy
+  new key stops being flagged after 24 hours instead of forever.
+- **A project that fails part-way commits nothing:** the shared collector discards its pending baselines and cursor, so the
+  window is read again next run instead of being skipped.
+- **`verify-key`** treats "previously seen, now gone" as proof only if the key was seen in the SAME project as the alias.
+- **Quota project:** requests carry `x-goog-user-project` (the quota project from the gcloud login, else the project being
+  read), which user credentials need on some Google APIs. This uses the permission `serviceusage.services.use` on that
+  project. **Unverified** against a live project until the first run.
+- **No metadata-server probe:** `NO_GCE_CHECK=True` is set before loading credentials, so google-auth does not contact
+  169.254.169.254 (an undocumented destination). Based on google-auth's documented environment variable; unverified live.
+- **Errors give a next step:** Google error bodies are mapped to fixed labels (`api_disabled`, `scope_insufficient`,
+  `quota_project`, `rate_limited`, `no_permission`) with fixed advice text; the body itself is never shown or stored.
+  Malformed data points raise a fixed message (no response values in health). An empty or non-object body is an error,
+  never "no keys". Pagination stops on a repeated token or after 50 pages. `key_status` reports `deleted: None` (unknown)
+  for a key it did not find. `verify-key` reports credential problems by type only, without a traceback.
+- **Recommended IAM (recommendation, not verified):** `roles/monitoring.viewer` and `roles/serviceusage.apiKeysViewer` on
+  each project, plus `serviceusage.services.use` (for example `roles/serviceusage.serviceUsageConsumer`) on the quota
+  project; the Cloud Monitoring and API Keys APIs enabled. Prefer a separate low-privilege Google identity over an Owner
+  account.
+- **Still open from this review:** `Retry-After` is not honoured on 429 (about 7 s of backoff in total); hour buckets are
+  not aligned to the hour (possible overlap between runs, hypothesis); `displayName` is stored without the free-text screen;
+  `doctor` does not check the Google credential type, quota project or enabled APIs; the unused OAuth POST allowance in
+  `check_url` remains.
 
 ## Consequences (security, operations, cost)
 - Security: new outbound traffic from the workstation to 4 hosts; read-only tokens limit blast radius if Sentinel

@@ -163,6 +163,49 @@ _PLANS: dict[str, tuple[_Step, ...]] = {
             True,
         ),
     ),
+    "R5b": (
+        (
+            "review_session_inputs",
+            "Review what the session read (web pages, files, tool and MCP output) for injected "
+            "instructions",
+            "investigate_first",
+            True,
+        ),
+        (
+            "end_session_revoke",
+            "End the agent session and revoke any credential it held",
+            "approval_required",
+            True,
+        ),
+        (
+            "verify_agent_hooks",
+            "Installed hooks match the reviewed patch and the decision log chain is intact "
+            "(system-verified)",
+            "investigate_first",
+            True,
+        ),
+    ),
+    "R5c": (
+        (
+            "review_mcp_server",
+            "Review the server (owner, source, pinned version); approve it in the inventory or "
+            "remove it",
+            "approval_required",
+            True,
+        ),
+        (
+            "review_data_sent",
+            "Review what the agent sent to the server and what the server could read",
+            "investigate_first",
+            True,
+        ),
+        (
+            "rotate_exposed_secrets",
+            "Rotate credentials the server could have read",
+            "approval_required",
+            False,
+        ),
+    ),
     "R8": (
         (
             "review_release_provenance",

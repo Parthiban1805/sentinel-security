@@ -23,9 +23,11 @@ from sentinel import (
 from sentinel.config import ProbeHost, Settings, validate_extra_path
 from sentinel.events.schema import format_time
 from sentinel.incidents import lifecycle
+from sentinel.inventory.agents import approved_servers, discover_mcp, register_agent
 from sentinel.inventory.assets import asset_id_for, location_asset_id, register_location
 from sentinel.scanners import gitleaks
 from sentinel.security import load_key
+from sentinel.sources.agent import AgentLogSource
 from sentinel.sources.gcp import AdcTokenProvider, GcpCollector, TokenProvider
 from sentinel.sources.github import GitHubCollector
 from sentinel.sources.http import HttpClient, HttpError
@@ -114,6 +116,7 @@ def run_once(
     http = client or HttpClient()
     lookback = timedelta(days=settings.first_run_lookback_days)
     health: dict[str, str] = {}
+    notes: list[str] = []  # facts for the operator that are not errors (e.g. first-run baseline)
     stored = 0
 
     def guard(name: str, action: Callable[[], int]) -> None:
@@ -163,7 +166,7 @@ def run_once(
     if scan:
         for raw in settings.extra_scan_paths:
             name = f"scan-extra:{location_asset_id(Path(raw))}"  # name + path hash: no collisions
-            notes: list[str] = []
+            gaps: list[str] = []
             guard(
                 name,
                 partial(
@@ -174,11 +177,11 @@ def run_once(
                     raw,
                     now,
                     allow_credential_stores=settings.allow_credential_stores,
-                    notes=notes,
+                    notes=gaps,
                 ),
             )
-            if notes and health[name] == "ok":
-                health[name] = "warn: " + notes[0]
+            if gaps and health[name] == "ok":
+                health[name] = "warn: " + gaps[0]
 
     if store.docs("canaries"):  # tripwire pass over armed decoys (stat only; never reads them)
         guard("canary:check", lambda: add(canaries.check(store, now)))
@@ -266,23 +269,30 @@ def run_once(
                 return 0  # assets, not events
 
             def collect_usage(project: str) -> int:
-                stored_count = add(
-                    gcp.collect_usage(
-                        store,
-                        project,
-                        now,
-                        lookback=lookback,
-                        multiple=settings.usage_multiple,
-                        floor=settings.usage_floor,
-                        spend_multiple=settings.usage_multiple,
+                try:
+                    stored_count = add(
+                        gcp.collect_usage(
+                            store,
+                            project,
+                            now,
+                            lookback=lookback,
+                            multiple=settings.usage_multiple,
+                            floor=settings.usage_floor,
+                            spend_multiple=settings.usage_multiple,
+                        )
                     )
-                )
+                except BaseException:
+                    # The collector is shared across projects: a project that failed part-way
+                    # must not have its half-done baselines committed by the next project.
+                    gcp.discard()
+                    raise
                 gcp.commit(store)  # baselines/cursor advance only after the events were stored
                 return stored_count
 
             for project in settings.gcp_projects:
                 guard(f"gcp:{project}:keys", partial(sync_keys, project))
                 guard(f"gcp:{project}:usage", partial(collect_usage, project))
+            notes.extend(gcp.notes)
 
     log_path = home / agentlog.LOG_NAME
     if log_path.exists():
@@ -301,6 +311,31 @@ def run_once(
 
         guard("agentlog", check_agent_log)
 
+        # Agent visibility (v0.3b): inventory of the agent and the project's MCP servers, then
+        # the log's new entries as events. Nothing is emitted from a log that fails verification.
+        agent_source = AgentLogSource()
+        workspace = home.resolve().parent  # the hooks keep the log in <project>/.sentinel
+
+        def collect_agent() -> int:
+            stored_count = add(agent_source.collect(store, home, now))
+            agent_source.commit(store)  # the cursor advances only after the events were stored
+            return stored_count
+
+        def agent_inventory() -> int:
+            register_agent(store, workspace, now)
+            discover_mcp(store, workspace, now)
+            return 0
+
+        # Events first, in their own guard: a broken .mcp.json (which an agent can write) must
+        # never stop the log from being read.
+        guard("agentlog:events", collect_agent)
+        guard("inventory:agents", agent_inventory)
+        if not approved_servers(store):
+            notes.append(
+                "R5c (unapproved MCP server) is inactive: no MCP server is approved yet "
+                "(`sentinel inventory agents`, then `inventory set mcp-<name> --approve`)"
+            )
+
     if probe_fetch is not None or settings.probe_hosts:
         guard("reverify:paths", lambda: reverify_open_paths(store, now, probe_fetch))
 
@@ -318,6 +353,7 @@ def run_once(
         "incidents_created": created,
         "alerts": alerted,
         "health": health,
+        "notes": notes,
     }
     store.put_doc("snapshots", "health:last_run", result)
     return result
@@ -334,7 +370,10 @@ def verify_key(
     aliases = [a for a in store.docs("aliases") if a["cred_ref"] == cred]
     if not cred or not aliases:
         raise ValueError("incident credential has no provider alias; run `inventory alias` first")
-    known_keys = {a["asset_id"] for a in store.assets()}
+    # (asset id, project): a key seen in ANOTHER project is no proof that this alias is gone
+    known_keys = {
+        (a["asset_id"], (a.get("attributes") or {}).get("project")) for a in store.assets()
+    }
     results = []
     passed = True
     for alias in aliases:
@@ -342,7 +381,7 @@ def verify_key(
         if status["found"]:
             ok = bool(status["deleteTime"])  # only a recorded deletion time counts as proof
             state = f"deleted at {status['deleteTime']}" if ok else "ACTIVE"
-        elif f"gcp-key-{alias['uid']}" in known_keys:
+        elif (f"gcp-key-{alias['uid']}", alias["project"]) in known_keys:
             ok = True  # Sentinel saw this exact key before; it is now gone
             state = "absent (previously seen in inventory, now gone)"
         else:
@@ -508,4 +547,120 @@ def verify_probe(
         lines.append(f"GET {attrs['base_url']}{attrs['path']} -> {shown}: {verdict}")
     evidence = f"re-probe at {format_time(now)}: " + "; ".join(lines)
     lifecycle.verify(store, iid, "verify_path_closed", actor, now, passed=passed, evidence=evidence)
+    return passed, evidence
+
+
+AGENT_HOOK_FILES = (
+    "_decision_log.py",
+    "bash_guard.py",
+    "protect_sensitive_files.py",
+    "mcp_log.py",
+    "session_log.py",
+)
+
+
+HOOK_PIN_KEY = "agent_hooks:pin"
+
+
+def _hooks_state(workspace: Path) -> tuple[dict[str, str], str | None, list[str]]:
+    """(sha256 per installed hook file, hash of settings.json's `hooks` block, problems).
+
+    Problems are fixed texts: a missing file, a settings file that disables hooks, or a local
+    settings file that overrides them. File contents are never returned or stored."""
+    import hashlib
+    import json
+
+    files: dict[str, str] = {}
+    problems: list[str] = []
+    for name in AGENT_HOOK_FILES:
+        path = workspace / ".claude" / "hooks" / name
+        if path.is_file():
+            files[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+        else:
+            problems.append(f"{name}: MISSING")
+    settings_hash = None
+    for name in ("settings.json", "settings.local.json"):
+        path = workspace / ".claude" / name
+        if not path.is_file():
+            if name == "settings.json":
+                problems.append("settings.json: MISSING")
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            problems.append(f"{name}: unreadable")
+            continue
+        if not isinstance(data, dict):
+            problems.append(f"{name}: unexpected shape")
+            continue
+        if data.get("disableAllHooks"):
+            problems.append(f"{name}: DISABLES all hooks")
+        if name == "settings.json":
+            block = json.dumps(data.get("hooks"), sort_keys=True, separators=(",", ":"))
+            settings_hash = hashlib.sha256(block.encode("utf-8")).hexdigest()
+        elif "hooks" in data:
+            problems.append("settings.local.json: OVERRIDES hooks")
+    return files, settings_hash, problems
+
+
+def pin_agent_hooks(store: Store, workspace: Path, actor: str, now: datetime) -> dict[str, Any]:
+    """Record the reviewed hook state in Sentinel's store (which the agent cannot write).
+
+    Human-only: the CLI refuses without an interactive terminal. `verify_agent_hooks` compares
+    against this pin, never against files the agent can edit (such as docs/patches)."""
+    files, settings_hash, problems = _hooks_state(workspace)
+    if problems:
+        raise ValueError("cannot pin an incomplete or overridden hook set: " + "; ".join(problems))
+    pin = {"files": files, "settings_hooks": settings_hash, "by": actor, "time": format_time(now)}
+    store.put_doc("snapshots", HOOK_PIN_KEY, pin)
+    store.add_audit(format_time(now), {"action": "agent_hooks_pinned", "by": actor})
+    return pin
+
+
+def verify_agent_hooks(
+    store: Store, iid: str, actor: str, now: datetime, home: Path
+) -> tuple[bool, str]:
+    """Verify `verify_agent_hooks` (R5b): the installed hook files and the settings.json `hooks`
+    block equal the human-made pin, nothing disables or overrides them, and the decision log
+    chain and anchor are intact with no dropped decisions. The workspace is the folder that holds
+    the state dir, never a path the caller chooses. Without a pin it raises and records nothing.
+    Evidence holds file names and hash prefixes only."""
+    incident = store.get_doc("incidents", iid)
+    if incident is None:
+        raise KeyError(f"unknown incident: {iid}")
+    if not any(s["step"] == "verify_agent_hooks" for s in incident["response_plan"]):
+        raise ValueError("this incident has no verify_agent_hooks step (it applies to R5b)")
+    pin = store.get_doc("snapshots", HOOK_PIN_KEY)
+    if pin is None:
+        raise ValueError(
+            "no reviewed hook pin; a human runs `sentinel agentlog pin-hooks` first (interactive)"
+        )
+    workspace = home.resolve().parent
+    files, settings_hash, problems = _hooks_state(workspace)
+    lines = list(problems)
+    for name in AGENT_HOOK_FILES:
+        if name in files:
+            same = files[name] == pin["files"].get(name)
+            lines.append(f"{name}: {'matches pin' if same else 'CHANGED'} ({files[name][:12]})")
+    settings_same = settings_hash is not None and settings_hash == pin["settings_hooks"]
+    lines.append(f"settings.json hooks: {'match pin' if settings_same else 'CHANGED'}")
+    log = agentlog.verify(home / agentlog.LOG_NAME, store.get_doc("snapshots", "agentlog:anchor"))
+    chain_ok = log.ok and not log.dropped and (home / agentlog.LOG_NAME).exists()
+    passed = (
+        not problems
+        and all(files.get(n) == pin["files"].get(n) for n in AGENT_HOOK_FILES)
+        and settings_same
+        and chain_ok
+    )
+    chain = (
+        f"chain intact ({log.entries} entries)"
+        if chain_ok
+        else f"chain NOT intact ({len(log.problems)} problem(s), {log.dropped} dropped)"
+    )
+    evidence = (
+        f"hook check at {format_time(now)} against the pin of {pin['time']}: "
+        + "; ".join(lines)
+        + f"; {chain}"
+    )
+    lifecycle.verify(store, iid, "verify_agent_hooks", actor, now, passed=passed, evidence=evidence)
     return passed, evidence

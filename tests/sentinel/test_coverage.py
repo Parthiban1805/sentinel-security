@@ -12,7 +12,7 @@ from sentinel.cli import main
 def test_every_scenario_logic_verified_through_the_real_pipeline() -> None:
     report = coverage.build_report(None, set())
     by_rule = {r["rule"]: r for r in report["scenarios"]}
-    assert set(by_rule) == {"R1", "R2", "R4", "R6", "R7", "R8", "R10", "R11"}
+    assert set(by_rule) == {"R1", "R2", "R4", "R5b", "R5c", "R6", "R7", "R8", "R10", "R11"}
     assert all(r["logic_verified_simulated"] and r["plan_generated"] for r in by_rule.values())
 
 
@@ -45,7 +45,8 @@ def test_producer_registry_matches_schema_event_types() -> None:
     assert registry <= schema_types  # registry never names a type the schema lacks
     report = coverage.build_report(None, set())
     assert set(report["event_types_with_no_producer"]) == schema_types - registry
-    assert "agent_tool_denied" in report["event_types_with_no_producer"]
+    assert "egress_anomaly" in report["event_types_with_no_producer"]  # needs the endpoint agent
+    assert "agent_tool_denied" not in report["event_types_with_no_producer"]  # v0.3b source
 
 
 def test_regression_detection() -> None:
