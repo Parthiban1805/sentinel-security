@@ -164,6 +164,15 @@ symlink is **unverified**.
 **v0.6 started (ADR-0010):** `sentinel incident summary <ID>` is a local, summary-only template. It makes no network call,
 uses no AI model, copies only an allow-listed set of fields, never proposes actions, and refuses to print credential-shaped
 text. An outside AI service would need a new ADR and a README first. 423 tests.
+**v0.6 AI assistant built (ADR-0014, proposed):** `incident summary <ID> --ai` sends a disguised evidence pack
+(placeholders for every repo, path, credential, identity and person; no notes or evidence text) to the Claude API after
+a cost confirmation; `--dry-run` shows the exact pack. No tools, fixed JSON answer, response-action steps dropped, output
+in its own AI-labelled file, store never written. Sonnet 5.5 default, Opus 5.5 with `--deep`; 30 calls a day, USD 20 a
+month; key in Windows Credential Manager only. Tests use a fake client. **Not done:** first live call (owner installs
+`sentinel[ai]` and stores a key), and the owner scoring the eval set. The eval set itself is built: `ai eval-build`
+makes 20 simulated incidents covering R1, R2, R4, R5b, R5c, R6, R7, R8, R10 and R11, two of them with injected text. Each
+case has a reference of what a correct answer must cover and must not claim. `ai eval-run` sends them after one
+confirmation, and `ai eval-score` checks the sheet against the gate.
 - `sentinel hygiene`: tracked `.env`, missing `.gitignore` entries, missing pre-commit hook, dump files.
 - Workflow policy checks (S8, S9, S10): unpinned actions, `pull_request_target` on untrusted code, broad permissions;
   extend R2. Dependency checks (S7): new dependency, typosquat heuristics, install scripts, lockfile pinning
@@ -263,7 +272,7 @@ recorded decision 100 percent; false positives under 20 percent per rule; recove
 | Google Cloud in scope before v0.3b | v0.3a | Install `gcloud` and run the soak, or drop provider usage for now |
 | Canary approach | v0.4 | Self-built first (recommended) or hosted |
 | Employee monitoring policy (what is logged, retention, notice) | before v0.3b | Needs a decision and sign-off |
-| AI provider and data rules for the assistant | v0.6 | Which data may leave the machine |
+| AI provider and data rules for the assistant | v0.6 | **Decided 2026-10-31** (ADR-0014): Claude API, disguised pack only |
 | GitHub plan for branch and push protection | v0.4 | Upgrade, move the repo, or accept the gap |
 | Windows-first, then macOS and Linux | v0.5 | Confirm the order and which OS employees use |
 | Severity targets and `[confirm]` thresholds | v0.3a | R4 multiple, R5b count and window, R8 window |

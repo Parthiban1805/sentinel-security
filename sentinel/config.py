@@ -61,6 +61,41 @@ def validate_extra_path(raw: str, *, allow_credential_stores: bool = False) -> s
     return text
 
 
+ASSISTANT_MODELS = ("claude-sonnet-5-5", "claude-opus-5-5")  # priced in assistant/budget.py
+
+
+@dataclass(frozen=True)
+class AssistantSettings:
+    """[assistant] in sentinel.toml (ADR-0014). Off unless --ai is given on the command line."""
+
+    model: str = "claude-sonnet-5-5"
+    deep_model: str = "claude-opus-5-5"  # used with --deep
+    max_output_tokens: int = 8000  # includes thinking tokens
+    daily_calls: int = 30
+    monthly_usd: float = 20.0  # also set the same cap in the Anthropic console
+    fallbacks: bool = True  # server-side refusal fallback (another model may answer)
+
+
+def _assistant(data: dict[str, Any]) -> AssistantSettings:
+    a = data.get("assistant", {})
+    s = AssistantSettings(
+        model=str(a.get("model", AssistantSettings.model)),
+        deep_model=str(a.get("deep_model", AssistantSettings.deep_model)),
+        max_output_tokens=int(a.get("max_output_tokens", AssistantSettings.max_output_tokens)),
+        daily_calls=int(a.get("daily_calls", AssistantSettings.daily_calls)),
+        monthly_usd=float(a.get("monthly_usd", AssistantSettings.monthly_usd)),
+        fallbacks=a.get("fallbacks", True) is not False,
+    )
+    for m in (s.model, s.deep_model):
+        if m not in ASSISTANT_MODELS:
+            raise ValueError(f"[assistant] model must be one of {', '.join(ASSISTANT_MODELS)}")
+    if not 1000 <= s.max_output_tokens <= 32000:
+        raise ValueError("[assistant] max_output_tokens must be between 1000 and 32000")
+    if s.daily_calls < 1 or not 0 < s.monthly_usd <= 1000:
+        raise ValueError("[assistant] daily_calls must be >= 1 and monthly_usd in (0, 1000]")
+    return s
+
+
 @dataclass(frozen=True)
 class Settings:
     scan_paths: tuple[str, ...] = ()
@@ -78,6 +113,7 @@ class Settings:
     probe_interval_hours: int = 24
     github_audit: bool = True  # branch protection / secret scanning audit of the watched repos
     github_audit_interval_hours: int = 24
+    assistant: AssistantSettings = field(default_factory=AssistantSettings)
     extra: dict[str, object] = field(default_factory=dict)
 
 
@@ -126,4 +162,5 @@ def load(path: Path) -> Settings:
         probe_interval_hours=int(data.get("probes", {}).get("interval_hours", 24)),
         github_audit=bool(gh.get("audit", True)),
         github_audit_interval_hours=int(gh.get("audit_interval_hours", 24)),
+        assistant=_assistant(data),
     )

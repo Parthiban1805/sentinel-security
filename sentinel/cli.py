@@ -24,6 +24,9 @@ from sentinel import (
     probes,
     runner,
 )
+from sentinel.assistant import budget as ai_budget
+from sentinel.assistant import client as ai_client
+from sentinel.assistant import explain as ai_explain
 from sentinel.events.schema import SchemaError, format_time
 from sentinel.incidents import lifecycle, summary, watch
 from sentinel.incidents.lifecycle import IncidentError
@@ -34,7 +37,7 @@ from sentinel.inventory.blast import link
 from sentinel.reporting import markdown
 from sentinel.scanners import gitleaks
 from sentinel.security import fingerprint, load_existing_key, load_key
-from sentinel.simulation import scenarios
+from sentinel.simulation import evalset, scenarios
 from sentinel.sources.agent import CURSOR_KEY as AGENT_CURSOR_KEY
 from sentinel.sources.agent import AgentLogSource
 from sentinel.sources.gcp import AdcTokenProvider, GcpCollector, alias_key, normalize_credential_id
@@ -258,11 +261,144 @@ def cmd_incident_close(args: argparse.Namespace) -> int:
 
 
 def cmd_incident_summary(args: argparse.Namespace) -> int:
+    if args.dry_run:  # what --ai would send: no key, no network
+        print(ai_explain.build_pack(_store(args), args.id).to_json())
+        return 0
+    if args.ai:
+        return _ai_summary(args)
+    if args.deep:
+        raise ValueError("--deep only applies with --ai")
     incident = _store(args).get_doc("incidents", args.id)
     if incident is None:
         raise KeyError(f"unknown incident: {args.id}")
     print(summary.render(incident), end="")
     return 0
+
+
+def _ai_summary(args: argparse.Namespace) -> int:
+    # Sending data off the machine and spending money needs a human at a terminal: scripts and
+    # AI agents cannot confirm (ADR-0014). There is deliberately no --yes.
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        raise ValueError("--ai needs an interactive terminal (a human must confirm the call)")
+    settings = config.load(Path(args.config)).assistant
+    result = ai_explain.run(
+        _store(args),
+        _home(args),
+        args.id,
+        settings,
+        _now(),
+        deep=args.deep,
+        confirm=_confirm,
+    )
+    if result is None:
+        print("cancelled: nothing was sent")
+        return 0
+    print(result.text, end="")
+    print()
+    print(f"saved: {result.path}")
+    return 0
+
+
+def _confirm(question: str) -> bool:
+    return input(question).strip().lower() in ("y", "yes")
+
+
+def cmd_ai_set_key(args: argparse.Namespace) -> int:
+    ai_client.set_key()
+    print("stored in the OS credential store (service 'sentinel-assistant'); not shown")
+    return 0
+
+
+def cmd_ai_delete_key(args: argparse.Namespace) -> int:
+    ai_client.delete_key()
+    print("removed from the OS credential store")
+    return 0
+
+
+def cmd_ai_usage(args: argparse.Namespace) -> int:
+    settings = config.load(Path(args.config)).assistant
+    calls, usd = ai_budget.spent(_home(args), _now())
+    print(f"today: {calls}/{settings.daily_calls} calls")
+    print(
+        f"this month: about ${usd:.4f} of ${settings.monthly_usd:.2f} (estimate; see the console)"
+    )
+    print(f"key stored: {'yes' if ai_client.has_key() else 'no'}")
+    return 0
+
+
+def _eval_dir(args: argparse.Namespace) -> Path:
+    path = Path(args.dir)
+    if path.resolve() == _home(args).resolve():
+        raise ValueError("the eval set needs its own directory, not the Sentinel state directory")
+    return path
+
+
+def cmd_ai_eval_build(args: argparse.Namespace) -> int:
+    rows = evalset.build(_eval_dir(args))
+    print(f"built {len(rows)} simulated incidents in {args.dir}")
+    print(f"scoring sheet: {Path(args.dir) / evalset.SHEET}")
+    print("next: sentinel ai eval-run (interactive), then fill in the sheet and run ai eval-score")
+    return 0
+
+
+def cmd_ai_eval_run(args: argparse.Namespace) -> int:
+    """Explain every eval incident that has no answer yet, after ONE human confirmation."""
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        raise ValueError("eval-run needs an interactive terminal (a human must confirm the calls)")
+    folder, settings = _eval_dir(args), config.load(Path(args.config)).assistant
+    store = Store(folder / "sentinel.db")
+    todo = [
+        r
+        for r in evalset.read_sheet(folder)
+        if not (folder / ai_explain.OUT_DIR / f"{r['incident_id']}.ai-summary.md").exists()
+    ]
+    if not todo:
+        print("every eval incident already has an answer")
+        return 0
+    worst = sum(
+        ai_explain.worst_case(ai_explain.build_pack(store, r["incident_id"]), settings)
+        for r in todo
+    )
+    question = (
+        f"Send {len(todo)} disguised simulated evidence packs to {settings.model} at "
+        f"{ai_client.BASE_URL}? Estimated cost at most ${worst:.2f} in total. Continue? [y/N] "
+    )
+    if not _confirm(question):
+        print("cancelled: nothing was sent")
+        return 0
+    failed = 0
+    for r in todo:
+        try:
+            result = ai_explain.run(
+                store,
+                folder,
+                r["incident_id"],
+                settings,
+                _now(),
+                confirm=lambda _q: True,  # the batch was confirmed above
+                ledger_home=_home(args),  # eval spend counts against the real budget
+            )
+        except ai_budget.BudgetError as exc:
+            print(f"stopped at {r['case']}: {exc}")
+            return 1
+        except ValueError as exc:  # refusal, truncation, bad answer: report and continue
+            failed += 1
+            print(f"{r['case']}: failed ({exc})")
+            continue
+        if result is not None:  # always set: confirm returns True
+            print(f"{r['case']}: ok (about ${result.cost_usd:.4f})")
+    print(f"done; {failed} failed. Answers: {folder / ai_explain.OUT_DIR}")
+    return 1 if failed else 0
+
+
+def cmd_ai_eval_score(args: argparse.Namespace) -> int:
+    s = evalset.score(evalset.read_sheet(_eval_dir(args)))
+    print(f"scored {s.scored}/{s.total}; mean accuracy {s.mean:.2f}; lowest {s.lowest}")
+    print(f"made something up: {s.made_up}; followed injected text: {s.injection_followed}")
+    for p in s.problems:
+        print(f"- {p}")
+    print("exit gate: PASS" if s.passed else "exit gate: NOT MET")
+    return 0 if s.passed else 1
 
 
 def cmd_watch(args: argparse.Namespace) -> int:
@@ -906,14 +1042,39 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("id")
     p.add_argument("--actor", required=True)
-    p = add(inc, "summary", cmd_incident_summary, help="local plain summary (no AI, no network)")
+    p = add(inc, "summary", cmd_incident_summary, help="plain summary; --ai for AI notes (opt-in)")
     p.add_argument("id")
+    p.add_argument("--ai", action="store_true", help="send a disguised pack to Claude (ADR-0014)")
+    p.add_argument("--deep", action="store_true", help="with --ai: use the deeper (costlier) model")
+    p.add_argument(
+        "--dry-run", action="store_true", help="print what --ai would send; send nothing"
+    )
+    p.add_argument("--config", default="sentinel.toml")
     p = add(inc, "close", cmd_incident_close)
     p.add_argument("id")
     p.add_argument("--actor", required=True)
     p.add_argument(
         "--unverified-note", help="close without full verification (recorded as unverified)"
     )
+
+    ai = sub.add_parser("ai", help="AI assistant key and usage (ADR-0014)").add_subparsers(
+        dest="sub", required=True
+    )
+    add(
+        ai, "set-key", cmd_ai_set_key, help="store the Anthropic API key in the OS credential store"
+    )
+    add(ai, "delete-key", cmd_ai_delete_key, help="remove the stored key")
+    p = add(ai, "usage", cmd_ai_usage, help="calls today and estimated spend this month")
+    p.add_argument("--config", default="sentinel.toml")
+    eval_help = {
+        "eval-build": (cmd_ai_eval_build, "create the 20 simulated incidents and scoring sheet"),
+        "eval-run": (cmd_ai_eval_run, "explain every eval incident (one confirmation)"),
+        "eval-score": (cmd_ai_eval_score, "check the filled-in sheet against the exit gate"),
+    }
+    for name, (func, text) in eval_help.items():
+        p = add(ai, name, func, help=text)
+        p.add_argument("--dir", default=".sentinel-eval", help="eval directory (not the state dir)")
+        p.add_argument("--config", default="sentinel.toml")
 
     p = add(sub, "report", cmd_report, help="baseline or incident report (markdown)")
     p.add_argument("--incident")

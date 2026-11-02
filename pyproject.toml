@@ -54,6 +54,7 @@ select = ["E", "F", "I", "B", "UP", "S"]
 "scripts/**" = ["S603", "S607"]
 "sentinel/alerts.py" = ["E501"]  # embedded PowerShell script
 "sentinel/dependencies.py" = ["E501"]  # popular-package data lists
+"sentinel/simulation/evalset.py" = ["E501"]  # case table: one readable line per expectation
 # Hook patches are stdlib-only scripts that run under whatever python the user has (keep them
 # conservative: timezone.utc, bare except-pass so logging can never affect a decision).
 "docs/patches/**" = ["E501", "UP", "S110"]
@@ -61,6 +62,11 @@ select = ["E", "F", "I", "B", "UP", "S"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
+
+# Optional extra `ai` (ADR-0014): imported lazily, may be absent in a base install.
+[[tool.mypy.overrides]]
+module = ["anthropic", "anthropic.*", "keyring", "keyring.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

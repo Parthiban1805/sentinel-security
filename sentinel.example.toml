@@ -34,3 +34,14 @@ usage_floor = 50
 
 [alerts]
 toast = true              # Windows notification for new real high/critical incidents
+
+# AI investigation assistant (v0.6, ADR-0014). Used only by `incident summary <ID> --ai`, which sends a
+# disguised evidence pack (no names, paths or keys) to api.anthropic.com after you confirm.
+# Key: `sentinel ai set-key` (OS credential store). Install: the optional extra `sentinel[ai]`.
+# [assistant]
+# model = "claude-sonnet-5-5"     # or claude-opus-5-5
+# deep_model = "claude-opus-5-5"  # used with --deep
+# max_output_tokens = 8000
+# daily_calls = 30
+# monthly_usd = 20.0              # also set this cap in the Anthropic console (the hard limit)
+# fallbacks = true                # server-side refusal fallback; another model may answer
