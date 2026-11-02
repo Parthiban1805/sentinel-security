@@ -219,7 +219,7 @@ Multi-tenant isolation, single sign-on, billing and licensing, compliance eviden
 
 | Workstream | What | When |
 |---|---|---|
-| Installability | `uv`/pip package, then a signed Windows installer, then macOS and Linux; versioned releases with checksums; auto-update with rollback | v0.5 start, finish v0.8 |
+| Installability | `uv`/pip package, then a signed Windows installer, then macOS and Linux; versioned releases with checksums; auto-update with rollback | v0.5 start, finish v0.8. **Started 2026-10-31 (ADR-0013):** wheel 0.5.0 with bundled schemas, `build_release.py` (clean tree, wheel checks, SHA256SUMS), `install-sentinel.ps1` (checksum before install, no downloads, `-CheckOnly`), `docs/install.md`; clean-venv install verified. Not yet: signing, hashed dependency lock, MSI, auto-update |
 | First-run experience | `sentinel init` wizard (state dir, scan paths, token guidance, doctor) replacing hand-edited TOML | v0.4 |
 | Enrolment and identity | Per-device enrolment token and revocation; operator identities; every record carries an organisation id from v0.8 so multi-tenant is possible later | design v0.7, build v0.8 |
 | Privacy and consent | What is collected per machine, retention, who sees it, opt-in paths, employee notice; log only denials and sampled counts, not every allowed action | policy before v0.3b, enforce v0.8 |

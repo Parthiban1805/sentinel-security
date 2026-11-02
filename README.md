@@ -22,7 +22,11 @@ policies/agent-policy.md      AI agent security policy (13 rules)
 .github/workflows/            Secret scan workflow
 ```
 
-## Setup
+## Install Sentinel on another machine
+See [docs/install.md](docs/install.md): a versioned wheel verified against `SHA256SUMS` and installed with
+`scripts/install-sentinel.ps1` (ADR-0013). Releases are built with `uv run python scripts/build_release.py`.
+
+## Setup (developing Sentinel itself)
 1. Copy this folder into your repo root (or start a new repo with it).
 2. Install tools: Python 3.11+, `pip install pre-commit ruff mypy pytest`, and gitleaks
    (https://github.com/gitleaks/gitleaks#installing).

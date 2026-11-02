@@ -1,6 +1,7 @@
 """Validation and construction of events/assets against docs/schemas/*.json.
 
-The schemas are read from the repository's docs/ folder (single source of truth).
+docs/schemas is the single source of truth. An installed wheel carries a copy in
+sentinel/_schemas (pyproject force-include, ADR-0013); a source checkout reads docs/ directly.
 """
 
 import json
@@ -12,7 +13,16 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-SCHEMA_DIR = Path(__file__).resolve().parents[2] / "docs" / "schemas"
+
+def locate_schemas(bundled: Path, repo: Path) -> Path:
+    """The copy inside an installed wheel wins; a source checkout falls back to docs/schemas."""
+    return bundled if bundled.is_dir() else repo
+
+
+SCHEMA_DIR = locate_schemas(
+    Path(__file__).resolve().parents[1] / "_schemas",  # inside an installed wheel
+    Path(__file__).resolve().parents[2] / "docs" / "schemas",  # source checkout
+)
 
 
 class SchemaError(ValueError):
