@@ -87,11 +87,7 @@ Then approve the MCP servers you trust: `uv run sentinel inventory agents`, and 
 
 ## 8. AI assistant (v0.6): set up the first live call
 **Why:** the assistant is built and tested offline; it has never called the real API. Four steps, about 15 minutes.
-1. **Install the optional packages** (my network tools are blocked, so you run this):
-   ```
-   uv add --optional ai anthropic keyring
-   ```
-   Then tell me; I will pin the exact versions it chose and re-run the checks.
+1. **Install the optional packages: done 2026-11-02** (anthropic 2.3.0, keyring 25.7.0, pinned).
 2. **Create an API key** in the Anthropic console, in a workspace used only for Sentinel, and set that workspace's
    monthly spend limit to USD 20. Check the organization's data retention terms while you are there.
 3. **Store the key** (hidden input, goes to Windows Credential Manager): `uv run sentinel ai set-key`

@@ -84,11 +84,17 @@ An independent read-only review found these gaps; all are fixed and covered by t
   draft says response actions run only through the approval-gated plan.
 - **Keyring backend.** Plaintext-file and other non-OS backends are refused.
 
+**Closed after the owner installed the packages (2026-11-02):**
+- The `ai` extra is pinned: `anthropic==2.3.0`, `keyring==25.7.0` (lockfile updated).
+- Checked against anthropic 2.3.0, offline: the credential sent is the stored key, not
+  `ANTHROPIC_AUTH_TOKEN`; an explicit `base_url` wins over `ANTHROPIC_BASE_URL`. The SDK did read proxy and
+  certificate environment variables by default (`trust_env=True`), so the client now sets
+  `trust_env=False` and verifies certificates with the OS store, like the collectors (tested).
+- The Windows keyring backend is `keyring.backends.Windows` (WinVault), which the allow-list accepts.
+
 **Still open:**
-- `[project.optional-dependencies] ai` with exact pins. This needs the owner to install the packages,
-  because package downloads are blocked for the agent.
-- Two checks against the pinned SDK: env-derived auth (`ANTHROPIC_AUTH_TOKEN`) must be ignored, and the
-  HTTP client should ignore proxy and certificate environment variables (`trust_env=False`).
+- The first live call: whether the API accepts the exact request (structured output, `effort: medium`,
+  server-side fallback on Sonnet 5.5) and what the answer looks like. Everything so far uses a fake client.
 - There is no file lock between the budget check and the reservation. Parallel runs could both pass the
   check (single-user CLI; accepted).
 

@@ -468,3 +468,20 @@ def test_config_rejects_unknown_models(tmp_path: Path) -> None:
     cfg.write_text('[assistant]\nmodel = "gpt-x"\n', encoding="utf-8")
     with pytest.raises(ValueError, match="model must be one of"):
         config.load(cfg)
+
+
+def test_make_client_ignores_proxy_and_base_url_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("anthropic")
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.invalid:3128")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://elsewhere.invalid")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "ENV-TOKEN-MARKER")
+    fake_keyring = SimpleNamespace(get_password=lambda service, user: "FAKE-KEY-MARKER")
+    monkeypatch.setattr(client, "_keyring", lambda: fake_keyring)
+    api = client.make_client()
+    assert str(api.base_url).rstrip("/") == client.BASE_URL  # not the environment's value
+    assert api._client.trust_env is False  # proxy and certificate variables are not read
+    assert api.max_retries == 0
+    assert "FAKE-KEY-MARKER" in api.auth_headers["Authorization"]  # the stored key is what is sent
+    assert "ENV-TOKEN" not in api.auth_headers["Authorization"]

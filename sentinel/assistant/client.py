@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from sentinel.assistant.prompt import OUTPUT_SCHEMA, SYSTEM
+from sentinel.sources.http import tls_context
 
 BASE_URL = "https://api.anthropic.com"
 KEYRING_SERVICE = "sentinel-assistant"
@@ -83,7 +84,17 @@ def make_client() -> Any:
             "the AI assistant is not installed; install the optional extra: sentinel[ai]"
         ) from None
     # No automatic retries: one confirmed call is one billed request, matching the reservation.
-    return anthropic.Anthropic(api_key=key, base_url=BASE_URL, timeout=TIMEOUT_S, max_retries=0)
+    # trust_env=False: proxy and certificate environment variables (HTTPS_PROXY, SSL_CERT_FILE)
+    # cannot reroute the key and the pack; certificates are verified by the OS store, as for the
+    # collectors. Checked against anthropic 2.3.0: the key (not ANTHROPIC_AUTH_TOKEN) is the
+    # credential sent, and an explicit base_url wins over ANTHROPIC_BASE_URL.
+    return anthropic.Anthropic(
+        api_key=key,
+        base_url=BASE_URL,
+        timeout=TIMEOUT_S,
+        max_retries=0,
+        http_client=anthropic.DefaultHttpxClient(trust_env=False, verify=tls_context()),
+    )
 
 
 def request(model: str, user: str, max_tokens: int, *, fallbacks: bool) -> dict[str, Any]:
