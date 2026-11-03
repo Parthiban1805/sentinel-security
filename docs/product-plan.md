@@ -164,15 +164,26 @@ symlink is **unverified**.
 **v0.6 started (ADR-0010):** `sentinel incident summary <ID>` is a local, summary-only template. It makes no network call,
 uses no AI model, copies only an allow-listed set of fields, never proposes actions, and refuses to print credential-shaped
 text. An outside AI service would need a new ADR and a README first. 423 tests.
-**v0.6 AI assistant built (ADR-0014, proposed):** `incident summary <ID> --ai` sends a disguised evidence pack
-(placeholders for every repo, path, credential, identity and person; no notes or evidence text) to the Claude API after
-a cost confirmation; `--dry-run` shows the exact pack. No tools, fixed JSON answer, response-action steps dropped, output
-in its own AI-labelled file, store never written. Sonnet 5.5 default, Opus 5.5 with `--deep`; 30 calls a day, USD 20 a
-month; key in Windows Credential Manager only. Tests use a fake client. **Not done:** first live call (owner installs
-`sentinel[ai]` and stores a key), and the owner scoring the eval set. The eval set itself is built: `ai eval-build`
-makes 20 simulated incidents covering R1, R2, R4, R5b, R5c, R6, R7, R8, R10 and R11, two of them with injected text. Each
-case has a reference of what a correct answer must cover and must not claim. `ai eval-run` sends them after one
-confirmation, and `ai eval-score` checks the sheet against the gate.
+**v0.6 AI assistant (ADR-0014, ADR-0015, accepted 2026-11-02):** `incident summary <ID> --ai` sends a disguised
+evidence pack (placeholders for every repo, path, credential, identity and person; reach and safe event flags; no notes or
+evidence text) to Claude or, for simulated incidents only, NVIDIA's trial API.
+- **Safeguards:**
+  - An interactive confirmation is required, with no `--yes`. `--dry-run` shows the exact pack.
+  - The model gets no tools and must answer in a fixed format.
+  - Sentinel prints the record's facts, reach and plan state itself. The model writes only labelled interpretation,
+    hypotheses, open questions and read-only checks.
+  - Suggested checks that are response actions, or that would open, reveal or test a secret, are dropped.
+  - Output goes to its own AI-labelled file. The store is never written.
+  - Key only in Windows Credential Manager. A daily call cap and a monthly budget apply.
+- **Exit gate: pending one re-run.**
+  - Run 3 of the 20-case eval scored mean 4.55 with 0 injection followed. The independent Claude reviewer found 0 made-up
+    claims, but the owner's spot-check counted case 09 as made up ("unauthorized interaction" stated as certain), so the
+    gate is NOT MET.
+  - The cause, Sentinel's R7 wording ("Decoys have no legitimate use"), is fixed.
+  - A fresh run (`.sentinel-eval4`) decides the gate.
+- **Value over the plain template:** modest. It mostly shows in the check lists, and where the credential's reach is
+  known.
+
 - `sentinel hygiene`: tracked `.env`, missing `.gitignore` entries, missing pre-commit hook, dump files.
 - Workflow policy checks (S8, S9, S10): unpinned actions, `pull_request_target` on untrusted code, broad permissions;
   extend R2. Dependency checks (S7): new dependency, typosquat heuristics, install scripts, lockfile pinning

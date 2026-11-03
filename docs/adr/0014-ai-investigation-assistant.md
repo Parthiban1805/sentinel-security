@@ -1,5 +1,5 @@
 # ADR-0014: AI investigation assistant (Claude API, disguised evidence, explain only)
-Date: 2026-10-31 | Status: proposed (owner decisions recorded 2026-10-31; awaiting review of this text)
+Date: 2026-10-31 | Status: accepted (owner, 2026-11-02, by instruction to the agent; amendments below included)
 
 ## Context
 Roadmap v0.6 asks for an assistant that summarizes impact, lists unknowns, proposes investigation steps and
@@ -8,7 +8,8 @@ rules and cost limits were decided. Project rule 5 requires a documented destina
 The owner chose the options below on 2026-10-31.
 
 ## Decision
-1. **Destination: Anthropic's Claude API, `https://api.anthropic.com`, only.** The URL is fixed in code
+1. **Destination: Anthropic's Claude API, `https://api.anthropic.com`, only.** (ADR-0015 adds a second,
+   separately configured provider; the default stays this one.) The URL is fixed in code
    (`sentinel/assistant/client.py`), so an `ANTHROPIC_BASE_URL` environment variable cannot redirect it.
    Official Python SDK, installed as the optional extra `sentinel[ai]`; the base install does not include it.
 2. **Opt-in per command, human at a terminal.** Only `sentinel incident summary <ID> --ai` calls out. It
@@ -83,6 +84,53 @@ An independent read-only review found these gaps; all are fixed and covered by t
 - **Action filter.** Now it also checks each step's reason and more synonyms. A fixed line on the report
   draft says response actions run only through the approval-gated plan.
 - **Keyring backend.** Plaintext-file and other non-OS backends are refused.
+
+**Structural rule: the model never writes facts (2026-11-02, after the second scoring).** Both scored runs
+failed the gate only on "made-up claims" (1, then 2 of 20), and every one was an inference that the model labelled
+as a fact. A prompt rule against it did not hold. So the answer format changed:
+- The model returns only `summary` (its assessment), `hypotheses`, `unknowns` and `investigation_steps`. The
+  `impact` items with a model-chosen fact/hypothesis label and the free-written `report_draft` are gone.
+- Sentinel prints the record's own sections itself, from the evidence pack: rule, severity and status, facts, the
+  record's hypotheses, what the credential can reach, the response-plan state, and whether the incident can close.
+  Every model-written section is headed "AI", with hypotheses tagged `[hypothesis]`. The notes file is the draft
+  report.
+- Checks that would open, download or print a file or dump that may hold secrets (an env file, key, database
+  dump, git config) are dropped like response actions. The prompt also forbids them.
+- An LLM can still write a wrong interpretation. It can no longer present one as a recorded fact.
+- Third scored run (`.sentinel-eval3`, independent Claude reviewer, not a human): mean 4.55, lowest 3, 0 made-up,
+  0 injection followed: gate PASS, pending the owner's spot-check. The reviewer found 4 of 66 suggested checks that
+  would reveal or test a secret ("confirm the secret matches", "verify the credential's validity", "credentials
+  found in the file", "list secrets stored on the host"). The filter now drops these too. Checked against the 66
+  real checks, it drops exactly those 4. A test-data bug (the linked database was typed as a repository) is fixed.
+- Owner spot-check of run 3 (2026-11-03): case 09 counts as made up. Its assessment said decoy use "by definition
+  indicates unauthorized interaction", but the record says who or what is unknown. Gate NOT MET. The cause was the
+  R7 fact text, "Decoys have no legitimate use", which invites that conclusion. It now reads: decoys have no planned
+  use, but a backup job, scanner or other automated process can still touch one, so this alone does not show who
+  touched it or why (tested). A fresh run (`.sentinel-eval4`) decides the gate.
+
+**Data rule extended after the first scoring (owner decision A, 2026-11-02).** The first scored run
+(mean accuracy 4.05, one made-up claim) showed that the model could not know what a credential can reach, or
+details such as "the login had no second factor". Two things were added to the pack, both still disguised:
+- `blast_radius`: whether the credential is linked to assets, and for each linked or reachable asset a
+  placeholder, the permission, the origin (documented or observed) and the importance. A permission, origin or
+  importance that is not Sentinel's own vocabulary is disguised like free text. The person who confirmed a
+  link is never sent.
+- Event `attributes`, from an exact allow-list only: numbers and flags (`multiple_of_baseline`,
+  `baseline_days`, `status`, `second_factor`, `adds_network`, `adds_secret_ref`, `patch_missing`) and the exact
+  known labels already allowed (`signature`, `target_class`, `decision`, `rule`, `probe`, `scenario`, `tool`).
+  Everything else in `attributes`, such as locations, URLs, file lists and free text, stays on the machine.
+The system prompt now also explains these fields, and tells the model to keep `[confirm]` markers, never to
+state who or where an actor is without evidence, and not to invent reasons. Tests cover each of these. The
+earlier scores no longer describe this version: the 20 cases are rebuilt in a new folder and scored again.
+
+**Found in the first live run (2026-11-02):**
+- The credential guard on the finished answer rejected a legitimate long file path (the entropy guess reads a long
+  token as a key). It now runs in two steps: the full check (known formats plus entropy) on the model's own text
+  before real values are put back, and only the known key formats after. Real values come from Sentinel's records,
+  and the pack is still checked before anything is sent. Tested both ways.
+- Models put raw line breaks inside JSON strings, which a strict parser rejects. The answer is now parsed with
+  control characters allowed in strings; it is still validated against the schema.
+- A link scrubber bug that removed "data:" from ordinary text is fixed (see tests).
 
 **Closed after the owner installed the packages (2026-11-02):**
 - The `ai` extra is pinned: `anthropic==2.3.0`, `keyring==25.7.0` (lockfile updated).

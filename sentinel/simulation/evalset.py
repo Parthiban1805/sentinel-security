@@ -62,11 +62,18 @@ def _cred(n: int) -> str:
     return f"cred-fp-{n:016x}"
 
 
-def _repo(store: Store, asset_id: str, name: str, importance: str, now: datetime) -> None:
+def _repo(
+    store: Store,
+    asset_id: str,
+    name: str,
+    importance: str,
+    now: datetime,
+    asset_type: str = "repository",
+) -> None:
     store.upsert_asset(
         {
             "asset_id": asset_id,
-            "asset_type": "repository",
+            "asset_type": asset_type,
             "name": name,
             "owner": "team-sim",
             "importance": importance,
@@ -84,7 +91,7 @@ def _r1(usages: int = 1, linked: bool = False, partial: bool = False) -> Any:
         for i in range(usages):
             _add(store, scenarios.provider_usage(ref, f"gcp-sim-{n}", t + timedelta(hours=2 + i)))
         if linked:
-            _repo(store, f"db-sim-{n}", f"sim-database-{n}", "critical", t)
+            _repo(store, f"db-sim-{n}", f"sim-database-{n}", "critical", t, "database")
             link(store, ref, f"db-sim-{n}", "read-write", ACTOR, t)
         if partial:
             [iid] = lifecycle.open_incidents(store, t + timedelta(hours=6))
@@ -206,7 +213,7 @@ CASES: tuple[Case, ...] = (
          "Anomalous login (no second factor) followed by a new token for the same identity within the window; stolen session is a hypothesis.",
          "That the account is confirmed compromised.", _r6),
     Case("canary triggered", "R7",
-         "A decoy was used; decoys have no legitimate use; where and by whom is unknown.",
+         "A decoy was used; it has no planned use, but automated processes can touch one; where and by whom is unknown.",
          "The identity or location of whoever used it.", _r7),
     Case("env file served", "R10",
          "An env-file shape is served publicly; it may already have been fetched; contents may hold credentials.",

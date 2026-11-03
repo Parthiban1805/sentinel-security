@@ -62,12 +62,16 @@ def validate_extra_path(raw: str, *, allow_credential_stores: bool = False) -> s
 
 
 ASSISTANT_MODELS = ("claude-sonnet-5-5", "claude-opus-5-5")  # priced in assistant/budget.py
+ASSISTANT_PROVIDERS = ("anthropic", "nvidia")  # ADR-0014, ADR-0015
+NVIDIA_DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
+_NVIDIA_MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{2,79}")
 
 
 @dataclass(frozen=True)
 class AssistantSettings:
     """[assistant] in sentinel.toml (ADR-0014). Off unless --ai is given on the command line."""
 
+    provider: str = "anthropic"  # or "nvidia" (ADR-0015); each has its own key and destination
     model: str = "claude-sonnet-5-5"
     deep_model: str = "claude-opus-5-5"  # used with --deep
     max_output_tokens: int = 8000  # includes thinking tokens
@@ -78,16 +82,25 @@ class AssistantSettings:
 
 def _assistant(data: dict[str, Any]) -> AssistantSettings:
     a = data.get("assistant", {})
+    provider = str(a.get("provider", AssistantSettings.provider))
+    if provider not in ASSISTANT_PROVIDERS:
+        raise ValueError(f"[assistant] provider must be one of {', '.join(ASSISTANT_PROVIDERS)}")
+    default_model = NVIDIA_DEFAULT_MODEL if provider == "nvidia" else AssistantSettings.model
+    default_deep = NVIDIA_DEFAULT_MODEL if provider == "nvidia" else AssistantSettings.deep_model
     s = AssistantSettings(
-        model=str(a.get("model", AssistantSettings.model)),
-        deep_model=str(a.get("deep_model", AssistantSettings.deep_model)),
+        provider=provider,
+        model=str(a.get("model", default_model)),
+        deep_model=str(a.get("deep_model", default_deep)),
         max_output_tokens=int(a.get("max_output_tokens", AssistantSettings.max_output_tokens)),
         daily_calls=int(a.get("daily_calls", AssistantSettings.daily_calls)),
         monthly_usd=float(a.get("monthly_usd", AssistantSettings.monthly_usd)),
         fallbacks=a.get("fallbacks", True) is not False,
     )
     for m in (s.model, s.deep_model):
-        if m not in ASSISTANT_MODELS:
+        if provider == "nvidia":
+            if not _NVIDIA_MODEL.fullmatch(m):
+                raise ValueError("[assistant] model is not a valid NVIDIA model id")
+        elif m not in ASSISTANT_MODELS:
             raise ValueError(f"[assistant] model must be one of {', '.join(ASSISTANT_MODELS)}")
     if not 1000 <= s.max_output_tokens <= 32000:
         raise ValueError("[assistant] max_output_tokens must be between 1000 and 32000")

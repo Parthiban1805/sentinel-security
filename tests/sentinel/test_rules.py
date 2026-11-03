@@ -94,3 +94,14 @@ def test_r7_any_canary_is_critical() -> None:
 
 def test_no_events_no_matches() -> None:
     assert correlate([], Context()) == []
+
+
+def test_r7_fact_does_not_imply_who_touched_the_decoy() -> None:
+    """v0.6 eval: "Decoys have no legitimate use" led readers to conclude "unauthorized". The fact
+    states the decoy has no planned use but that automated processes can still touch one."""
+    [m] = correlate(scenarios.canary("canary-x", T0), Context())
+    fact = m.facts[0]
+    assert m.rule_id == "R7"
+    assert "no planned use" in fact and "automated process" in fact
+    assert "does not show who touched it or why" in fact
+    assert "legitimate" not in fact and "unauthorized" not in fact.lower()

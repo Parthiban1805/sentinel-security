@@ -303,15 +303,22 @@ def _confirm(question: str) -> bool:
     return input(question).strip().lower() in ("y", "yes")
 
 
+def _provider(args: argparse.Namespace) -> str:
+    """--provider if given, else [assistant] provider from the config."""
+    return str(args.provider or config.load(Path(args.config)).assistant.provider)
+
+
 def cmd_ai_set_key(args: argparse.Namespace) -> int:
-    ai_client.set_key()
-    print("stored in the OS credential store (service 'sentinel-assistant'); not shown")
+    provider = _provider(args)
+    ai_client.set_key(provider)
+    print(f"{provider} key stored in the OS credential store (not shown)")
     return 0
 
 
 def cmd_ai_delete_key(args: argparse.Namespace) -> int:
-    ai_client.delete_key()
-    print("removed from the OS credential store")
+    provider = _provider(args)
+    ai_client.delete_key(provider)
+    print(f"{provider} key removed from the OS credential store")
     return 0
 
 
@@ -322,7 +329,8 @@ def cmd_ai_usage(args: argparse.Namespace) -> int:
     print(
         f"this month: about ${usd:.4f} of ${settings.monthly_usd:.2f} (estimate; see the console)"
     )
-    print(f"key stored: {'yes' if ai_client.has_key() else 'no'}")
+    print(f"provider: {settings.provider} ({settings.model})")
+    print(f"key stored: {'yes' if ai_client.has_key(settings.provider) else 'no'}")
     return 0
 
 
@@ -361,7 +369,8 @@ def cmd_ai_eval_run(args: argparse.Namespace) -> int:
     )
     question = (
         f"Send {len(todo)} disguised simulated evidence packs to {settings.model} at "
-        f"{ai_client.BASE_URL}? Estimated cost at most ${worst:.2f} in total. Continue? [y/N] "
+        f"{ai_explain.backend(settings).BASE_URL}? Estimated cost at most ${worst:.2f} in total. "
+        "Continue? [y/N] "
     )
     if not _confirm(question):
         print("cancelled: nothing was sent")
@@ -1060,10 +1069,13 @@ def build_parser() -> argparse.ArgumentParser:
     ai = sub.add_parser("ai", help="AI assistant key and usage (ADR-0014)").add_subparsers(
         dest="sub", required=True
     )
-    add(
-        ai, "set-key", cmd_ai_set_key, help="store the Anthropic API key in the OS credential store"
-    )
-    add(ai, "delete-key", cmd_ai_delete_key, help="remove the stored key")
+    for name, func, text in (
+        ("set-key", cmd_ai_set_key, "store the provider's API key in the OS credential store"),
+        ("delete-key", cmd_ai_delete_key, "remove the stored key"),
+    ):
+        p = add(ai, name, func, help=text)
+        p.add_argument("--provider", choices=list(ai_client.KEYRING_USERS), help="default: config")
+        p.add_argument("--config", default="sentinel.toml")
     p = add(ai, "usage", cmd_ai_usage, help="calls today and estimated spend this month")
     p.add_argument("--config", default="sentinel.toml")
     eval_help = {

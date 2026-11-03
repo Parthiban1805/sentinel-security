@@ -86,3 +86,13 @@ def test_cli_eval_run_needs_a_terminal_and_eval_dir_is_not_the_state_dir(
     assert "interactive terminal" in capsys.readouterr().err
     assert main(["--home", home, "ai", "eval-build", "--dir", home]) == 1
     assert "own directory" in capsys.readouterr().err
+
+
+def test_linked_database_is_typed_as_a_database(
+    built: tuple[Path, list[dict[str, str]]],
+) -> None:
+    home, rows = built
+    store = Store(home / "sentinel.db")
+    case03 = next(r for r in rows if r["case"].startswith("03"))
+    hints = explain.build_pack(store, case03["incident_id"]).payload["asset_hints"]
+    assert {"type": "database", "importance": "critical"} in hints.values()

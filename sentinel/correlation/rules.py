@@ -182,7 +182,14 @@ def r7_canary(events: list[Event], ctx: Context) -> list[Match]:
                 # copied, or no reason (the decoy was USED): critical. Tampering: the event's own.
                 severity_floor="critical" if reason in (None, "copied") else e["severity"],
                 confidence=e["confidence"],
-                facts=(f"{fact} Detected at {e['time']}. Decoys have no legitimate use.",),
+                # Worded so it does not imply who: a decoy has no planned use, but backup jobs,
+                # scanners and other automated processes can still touch one (found in the v0.6
+                # eval, where "no legitimate use" led readers to conclude "unauthorized").
+                facts=(
+                    f"{fact} Detected at {e['time']}. Decoys have no planned use, but a backup "
+                    "job, scanner or other automated process can still touch one, so this alone "
+                    "does not show who touched it or why.",
+                ),
                 hypotheses=(
                     "Who or what touched the decoy, and why, is unknown until investigated.",
                 ),

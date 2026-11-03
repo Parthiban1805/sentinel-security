@@ -71,6 +71,24 @@ _SAFE_ATTR: dict[str, Any] = {
     "scenario": re.compile(r"S\d{1,2}"),
     "tool": re.compile(r"[A-Z][A-Za-z]{1,30}"),  # built-in tool names (Bash, Read); not mcp__*
 }
+# Event attributes that are sent (exact keys only). Numbers and flags carry no identity; labels must
+# also match the exact known values in _SAFE_ATTR. Everything else in `attributes` stays home.
+_NUMBER_OR_FLAG_KEYS = frozenset(
+    {
+        "multiple_of_baseline",
+        "baseline_days",
+        "status",
+        "second_factor",
+        "adds_network",
+        "adds_secret_ref",
+        "patch_missing",
+    }
+)
+SAFE_EVENT_ATTR_KEYS = _NUMBER_OR_FLAG_KEYS | frozenset(_SAFE_ATTR)
+# Blast-radius vocabulary written by Sentinel; any other value is disguised like free text.
+_KNOWN_PERMISSIONS = frozenset({"read", "write", "read-write", "readwrite", "admin", "none"})
+_KNOWN_ORIGINS = frozenset({"documented", "observed"})
+_KNOWN_IMPORTANCE = frozenset({"low", "medium", "high", "critical"})
 # Keys whose values identify something: disguised however short they are.
 _IDENTIFYING = re.compile(r"(asset_id|mcp_server|server|session|name|repo|host|url|user|owner)$")
 _EVENT_SAFE_KEYS = frozenset(
@@ -216,6 +234,60 @@ def _strings(obj: Any) -> list[str]:
     return []
 
 
+def _event_attrs(event: dict[str, Any]) -> dict[str, Any]:
+    attrs = event.get("attributes") or {}
+    return {
+        k: attrs[k]
+        for k in sorted(SAFE_EVENT_ATTR_KEYS)
+        if k in attrs and attrs[k] is not None and _is_safe_attr(k, attrs[k])
+    }
+
+
+def _vocab(d: _Disguiser, value: object, known: frozenset[str]) -> None:
+    if isinstance(value, str) and value.lower() not in known:
+        d.add(value, "VALUE", identifying=True)  # not Sentinel's vocabulary: disguise it
+
+
+def _collect_blast(d: _Disguiser, blast: dict[str, Any]) -> None:
+    for asset_id in blast.get("exposed_in", []):
+        d.add(asset_id, "ASSET", identifying=True)
+    for key in ("confirmed_access", "possible_access"):
+        for edge in blast.get(key, []):
+            d.add(edge.get("asset_id"), "ASSET", identifying=True)
+            d.add(edge.get("via"), "ASSET", identifying=True)
+            _vocab(d, edge.get("permission"), _KNOWN_PERMISSIONS)
+            _vocab(d, edge.get("origin"), _KNOWN_ORIGINS)
+            _vocab(d, edge.get("importance"), _KNOWN_IMPORTANCE)
+
+
+def _blast_view(blast: dict[str, Any]) -> dict[str, Any]:
+    """What the credential can reach. Who confirmed a link (a person) is never included."""
+
+    def edge(e: dict[str, Any], *keys: str) -> dict[str, Any]:
+        return {k: e[k] for k in keys if k in e}
+
+    return {
+        "credential_linked_to_assets": not blast.get("unlinked", True),
+        "exposed_in": sorted(blast.get("exposed_in", [])),
+        "confirmed_access": [
+            edge(e, "asset_id", "permission", "importance")
+            for e in sorted(blast.get("confirmed_access", []), key=lambda e: str(e["asset_id"]))
+        ],
+        "possible_access": [
+            edge(e, "asset_id", "via", "permission", "origin", "importance")
+            for e in sorted(blast.get("possible_access", []), key=lambda e: str(e["asset_id"]))
+        ],
+    }
+
+
+def _timeline_entry(t: dict[str, Any], attrs_by_event: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    entry = {k: t[k] for k in ("time", "event_type", "source", "asset_id")}
+    attrs = attrs_by_event.get(t["event_id"])
+    if attrs:
+        entry["attributes"] = attrs
+    return entry
+
+
 def build(
     incident: dict[str, Any],
     events: list[dict[str, Any]],
@@ -239,11 +311,15 @@ def build(
             d.add(t["source"], "VALUE", identifying=True)
     for e in involved:
         _collect_event(d, e)
+    blast = incident.get("blast_radius")
+    if isinstance(blast, dict):
+        _collect_blast(d, blast)
     for a in assets:  # inventory: ids and names (repo folders, paths) are identifying
         d.add(a.get("asset_id"), "ASSET", identifying=True)
         d.add(a.get("name"), "VALUE", identifying=True)
 
-    body = {
+    attrs_by_event = {e["event_id"]: _event_attrs(e) for e in involved}
+    body: dict[str, Any] = {
         "incident": "INCIDENT-1",
         "rule_id": view["rule_id"],
         "title": view["title"],
@@ -260,10 +336,7 @@ def build(
         "facts": view["facts"],
         "hypotheses": view["hypotheses"],
         "unknowns": view["unknowns"],
-        "timeline": [
-            {k: t[k] for k in ("time", "event_type", "source", "asset_id")}
-            for t in view["timeline"]
-        ],
+        "timeline": [_timeline_entry(t, attrs_by_event) for t in view["timeline"]],
         "response_plan": [
             {
                 "step": s["step"],
@@ -274,6 +347,8 @@ def build(
             for s in view["response_plan"]
         ],
     }
+    if isinstance(blast, dict):
+        body["blast_radius"] = _blast_view(blast)
     payload = _walk(body, d.sub)
     by_id = {a.get("asset_id"): a for a in assets}
     payload["asset_hints"] = {

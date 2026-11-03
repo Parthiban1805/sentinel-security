@@ -37,7 +37,7 @@ Thumbs.db
 # Sentinel local state (map of secret locations: sensitive)
 .sentinel/
 # v0.6 AI eval set: simulated incidents, AI answers and the owner's scores
-.sentinel-eval/
+.sentinel-eval*/
 
 # Local Sentinel config (copy from sentinel.example.toml)
 sentinel.toml

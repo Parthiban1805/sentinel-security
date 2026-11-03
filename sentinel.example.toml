@@ -39,7 +39,8 @@ toast = true              # Windows notification for new real high/critical inci
 # disguised evidence pack (no names, paths or keys) to api.anthropic.com after you confirm.
 # Key: `sentinel ai set-key` (OS credential store). Install: the optional extra `sentinel[ai]`.
 # [assistant]
-# model = "claude-sonnet-5-5"     # or claude-opus-5-5
+# provider = "anthropic"           # or "nvidia" (ADR-0015): then `sentinel ai set-key --provider nvidia`
+# model = "claude-sonnet-5-5"     # or claude-opus-5-5; for nvidia: an NVIDIA model id
 # deep_model = "claude-opus-5-5"  # used with --deep
 # max_output_tokens = 8000
 # daily_calls = 30

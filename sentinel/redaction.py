@@ -28,10 +28,18 @@ def _entropy(text: str) -> float:
     return -sum(n / len(text) * math.log2(n / len(text)) for n in counts.values())
 
 
+def has_secret_pattern(text: str) -> bool:
+    """Known credential formats only (no entropy guess): for text whose long tokens are expected,
+    such as real file paths restored into an answer."""
+    return any(p.search(text) for p in _PATTERNS)
+
+
 def looks_like_secret(text: str) -> bool:
-    if any(p.search(text) for p in _PATTERNS):
+    if has_secret_pattern(text):
         return True
-    return any(_entropy(m) > 4.2 for m in _TOKENISH.findall(text))
+    # Random secrets almost always contain a digit (a 32-character random token has none about
+    # 0.1% of the time); a long hyphenated file name made of words does not, and is not a key.
+    return any(_entropy(m) > 4.2 for m in _TOKENISH.findall(text) if any(c.isdigit() for c in m))
 
 
 def check_free_text(label: str, text: str | None) -> str | None:

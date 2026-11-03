@@ -17,6 +17,9 @@ PRICES: dict[str, tuple[float, float]] = {  # model -> (input, output) USD per 1
     "claude-sonnet-5-5": (2.0, 10.0),
     "claude-opus-5-5": (4.0, 20.0),
     "claude-opus-4-8": (5.0, 25.0),  # refusal fallback target (cyber category)
+    # NVIDIA's hosted API for the default ADR-0015 model: the OWNER states it is free (2026-11-02).
+    # Not verified by Sentinel. Any other model id keeps the highest-tier assumption below.
+    "nvidia/nemotron-3-ultra-550b-a55b": (0.0, 0.0),
 }
 WORST = (10.0, 50.0)  # highest published tier; used for any model not in PRICES
 FALLBACK_WORST = PRICES["claude-opus-4-8"]
@@ -43,9 +46,12 @@ def estimate_tokens(text: str) -> int:
     return len(text) // 3 + 1
 
 
-def worst_case(model: str, input_tokens: int, max_output: int) -> float:
-    """Most a call can cost: the larger of the chosen model and its fallback, at max output."""
-    p_in, p_out = max(PRICES.get(model, WORST), FALLBACK_WORST)
+def worst_case(model: str, input_tokens: int, max_output: int, *, fallback: bool = True) -> float:
+    """Most a call can cost: the chosen model, or its Claude refusal fallback if that can apply,
+    at max output."""
+    p_in, p_out = PRICES.get(model, WORST)
+    if fallback:
+        p_in, p_out = max((p_in, p_out), FALLBACK_WORST)
     return (input_tokens * p_in + max_output * p_out) / 1_000_000
 
 

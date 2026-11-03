@@ -65,3 +65,21 @@ def test_set_status_refuses_pasted_key_and_stores_nothing(tmp_path: Path) -> Non
     doc = store.get_doc("findings", f.cred_ref)
     assert doc is not None and doc["status"] == "open" and doc["notes"] == []
     assert store.audit() == []
+
+
+def test_a_long_hyphenated_name_without_digits_is_not_mistaken_for_a_key() -> None:
+    from sentinel.redaction import looks_like_secret
+
+    slug = ".github/workflows/this-is-a-plain-long-hyphenated-name-of-a-file-without-numbers.yml"
+    assert not looks_like_secret(slug)
+
+
+def test_a_random_token_with_digits_is_still_caught() -> None:
+    import random
+    import string
+
+    from sentinel.redaction import looks_like_secret
+
+    rng = random.Random(7)  # noqa: S311  runtime-built test value (CLAUDE.md rule 3)
+    token = "".join(rng.choice(string.ascii_letters + string.digits) for _ in range(40)) + "7"
+    assert looks_like_secret(token)

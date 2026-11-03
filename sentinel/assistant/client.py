@@ -1,4 +1,6 @@
-"""The one outbound connection of the assistant: api.anthropic.com (ADR-0014, README.md here).
+"""Anthropic provider and shared key helpers (ADR-0014, README.md here).
+
+Destination: api.anthropic.com.
 
 - Destination pinned in code (an ANTHROPIC_BASE_URL environment variable cannot redirect it).
 - API key read only from the OS credential store (Windows Credential Manager via `keyring`); never
@@ -16,7 +18,9 @@ from sentinel.sources.http import tls_context
 
 BASE_URL = "https://api.anthropic.com"
 KEYRING_SERVICE = "sentinel-assistant"
-KEYRING_USER = "anthropic-api-key"
+# One credential-store entry per provider; the key is never read from anywhere else.
+KEYRING_USERS = {"anthropic": "anthropic-api-key", "nvidia": "nvidia-api-key"}
+PROVIDER_LABELS = {"anthropic": "Anthropic", "nvidia": "NVIDIA"}
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 TIMEOUT_S = 120.0
 # Windows Credential Manager, macOS Keychain, Linux Secret Service. Not plaintext-file backends
@@ -57,24 +61,36 @@ def _keyring() -> Any:
     return keyring
 
 
-def set_key() -> None:
+def _user(provider: str) -> str:
+    if provider not in KEYRING_USERS:
+        raise AssistantError(f"unknown provider {provider!r}")
+    return KEYRING_USERS[provider]
+
+
+def set_key(provider: str = "anthropic") -> None:
     """Ask for the key without echoing it and store it in the OS credential store."""
-    value = getpass.getpass("Anthropic API key (input hidden): ").strip()
+    user = _user(provider)
+    value = getpass.getpass(f"{PROVIDER_LABELS[provider]} API key (input hidden): ").strip()
     if not value:
         raise AssistantError("no key entered; nothing stored")
-    _keyring().set_password(KEYRING_SERVICE, KEYRING_USER, value)
+    _keyring().set_password(KEYRING_SERVICE, user, value)
 
 
-def delete_key() -> None:
-    _keyring().delete_password(KEYRING_SERVICE, KEYRING_USER)
+def delete_key(provider: str = "anthropic") -> None:
+    _keyring().delete_password(KEYRING_SERVICE, _user(provider))
 
 
-def has_key() -> bool:
-    return bool(_keyring().get_password(KEYRING_SERVICE, KEYRING_USER))
+def get_key(provider: str) -> str | None:
+    value = _keyring().get_password(KEYRING_SERVICE, _user(provider))
+    return str(value) if value else None
+
+
+def has_key(provider: str = "anthropic") -> bool:
+    return get_key(provider) is not None
 
 
 def make_client() -> Any:
-    key = _keyring().get_password(KEYRING_SERVICE, KEYRING_USER)
+    key = get_key("anthropic")
     if not key:
         raise AssistantError("no Anthropic API key stored; run: sentinel ai set-key")
     try:
