@@ -85,7 +85,15 @@ Sentinel would fingerprint real keys there. Drive roots and your whole home fold
 Then approve the MCP servers you trust: `uv run sentinel inventory agents`, and for each one
 `uv run sentinel inventory set mcp-<name> --actor Parthiban --approve` (interactive terminal).
 
-## 8. AI assistant (v0.6): close-out
+## 8. AI assistant (v0.6): DONE 2026-11-03
+Run 4: mean 4.55, 0 made-up claims, 0 injection followed. Gate met, and the owner's spot-check of case 09 was ok.
+
+**Still useful later (not blocking):**
+- For real incidents, use `provider = "anthropic"` with an Anthropic key, plus a scored eval run for Claude. NVIDIA's trial is
+  for simulated incidents only, and that is enforced in code.
+- Optionally delete the old eval folders (`.sentinel-eval`, `.sentinel-eval2`, `.sentinel-eval3`). They are git-ignored.
+
+### History of item 8 (kept for reference)
 **Status 2026-11-03:** built and committed. **Gate pending one re-run.** On the owner's spot-check, run 3 case 09 counts as made
 up (gate NOT MET, by one sentence). The cause was Sentinel's own R7 wording ("Decoys have no legitimate use"), which is now
 reworded: the decoy has no planned use, but automated processes can still touch one. **Next:**

@@ -107,6 +107,11 @@ as a fact. A prompt rule against it did not hold. So the answer format changed:
   R7 fact text, "Decoys have no legitimate use", which invites that conclusion. It now reads: decoys have no planned
   use, but a backup job, scanner or other automated process can still touch one, so this alone does not show who
   touched it or why (tested). A fresh run (`.sentinel-eval4`) decides the gate.
+- Run 4 (2026-11-03, `.sentinel-eval4`): mean 4.55, lowest 3, 0 made-up claims, 0 injection followed. Gate MET. The
+  owner spot-checked case 09 and accepted it. The reviewer flagged 5 more checks that need the secret (credentials
+  "present in" or "referenced in" an exposed file, "full request and response payloads", gitleaks finding "context").
+  The filter now drops these as well. Across all 131 real checks from runs 3 and 4 it drops exactly the 9 flagged ones.
+  This was audited on the text as the filter sees it, before names are restored.
 
 **Data rule extended after the first scoring (owner decision A, 2026-11-02).** The first scored run
 (mean accuracy 4.05, one made-up claim) showed that the model could not know what a credential can reach, or

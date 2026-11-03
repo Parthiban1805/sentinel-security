@@ -49,8 +49,13 @@ _REVEALS_SECRET = re.compile(
     r"|\b(value|plaintext|raw)\s+of\s+(the\s+)?(secret|key|token|credential|password)"
     r"|\b(validity|is\s+valid|still\s+valid|still\s+works?)\b"
     r"|\b(test|try)\w*\b[^.]{0,30}\b(key|token|credential|password|secret)\b"
-    r"|\b(found|stored|contained|listed)\s+in\s+(the\s+)?(exposed\s+|served\s+)?"
-    r"(file|dump|config|archive|backup|env)"
+    r"|\b(found|stored|contained|listed|present|referenced|included)\s+in\s+(the\s+)?"
+    r"(exposed\s+|served\s+)?(git\s+)?(file|dump|config|archive|backup|env)"
+    # Full message bodies of an agent or tool call may carry the file contents it read.
+    r"|\b(request\s+and\s+response|response)\s+(payloads?|bod(y|ies))\b"
+    r"|\bfull\s+(request\s+)?payloads?\b"
+    # The context or snippet of a scanner finding shows the secret itself.
+    r"|\b(gitleaks|scanner)\s+finding\b[^.]{0,80}\b(context|snippet|matched\s+text)\b"
     r"|\b(enumerate|list)\w*\b[^.]{0,40}\b(secrets|credentials|keys|tokens|passwords)\b"
     r"[^.]{0,20}\bstored\b",
     re.IGNORECASE,

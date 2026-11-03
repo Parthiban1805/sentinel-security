@@ -175,12 +175,16 @@ evidence text) to Claude or, for simulated incidents only, NVIDIA's trial API.
   - Suggested checks that are response actions, or that would open, reveal or test a secret, are dropped.
   - Output goes to its own AI-labelled file. The store is never written.
   - Key only in Windows Credential Manager. A daily call cap and a monthly budget apply.
-- **Exit gate: pending one re-run.**
-  - Run 3 of the 20-case eval scored mean 4.55 with 0 injection followed. The independent Claude reviewer found 0 made-up
-    claims, but the owner's spot-check counted case 09 as made up ("unauthorized interaction" stated as certain), so the
-    gate is NOT MET.
-  - The cause, Sentinel's R7 wording ("Decoys have no legitimate use"), is fixed.
-  - A fresh run (`.sentinel-eval4`) decides the gate.
+- **Exit gate: MET (2026-11-03).**
+  - Run 4 of the 20-case eval (NVIDIA provider, simulated incidents) scored mean 4.55, lowest 3, 0 made-up claims and 0
+    injection followed.
+  - It was scored by an independent Claude reviewer; the owner spot-checked case 09 and accepted it.
+  - On the way:
+    - Run 3 failed on case 09 after the owner's spot-check. The cause was Sentinel's own R7 wording, now fixed.
+    - Checks that would expose a secret (9 of 131 across runs 3 and 4) are now dropped, with no false drops.
+  - The gate covers the NVIDIA provider only; Claude needs its own scored run before real incidents.
+
+**v0.6 done.**
 - **Value over the plain template:** modest. It mostly shows in the check lists, and where the credential's reach is
   known.
 

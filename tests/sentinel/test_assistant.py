@@ -759,3 +759,32 @@ def _runtime_random_token() -> str:
 
     rng = random.Random(7)  # noqa: S311  test data, not cryptography
     return "".join(rng.choice(string.ascii_letters + string.digits) for _ in range(40)) + "7"
+
+
+@pytest.mark.parametrize(
+    "step",
+    [  # found in eval run 4, wording kept (placeholders instead of names)
+        "Review the gitleaks finding in ASSET-1 to identify the exact file, commit, and context where CRED-1 was exposed.",
+        "Check agent logs and MCP gateway records for the full request and response payloads, metadata, and timestamps for the call.",
+        "Query credential usage logs for any tokens or keys referenced in the git config to detect unauthorized use.",
+        "Check provider usage logs (rule R1) for any credentials that might be present in the file to see if they have been used.",
+        "Read the response bodies returned by the read_file tool.",
+    ],
+)
+def test_run4_checks_that_need_the_secret_are_dropped(step: str) -> None:
+    steps = [{"step": step, "reason": "see what was exposed"}]
+    assert output.parse(answer(investigation_steps=steps)).dropped_steps == 1
+
+
+@pytest.mark.parametrize(
+    "step",
+    [
+        "Review the gitleaks finding to identify which file and commit exposed CRED-1, and when.",
+        "Check MCP gateway logs for the call's timestamps, tool name and response size.",
+        "Check provider usage logs for CRED-1 in the hour after the exposure.",
+        "Ask the agent owner which MCP servers the agent is meant to use.",
+    ],
+)
+def test_metadata_checks_on_the_same_artifacts_are_kept(step: str) -> None:
+    steps = [{"step": step, "reason": "establish the timeline"}]
+    assert output.parse(answer(investigation_steps=steps)).dropped_steps == 0
