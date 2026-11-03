@@ -61,7 +61,9 @@ select = ["E", "F", "I", "B", "UP", "S"]
 "sentinel/alerts.py" = ["E501"]  # embedded PowerShell script
 "sentinel/dependencies.py" = ["E501"]  # popular-package data lists
 "sentinel/simulation/evalset.py" = ["E501"]  # case table: one readable line per expectation
-"sentinel/assistant/prompt.py" = ["E501"]  # the system prompt is prose; wrapping it changes nothing
+"sentinel/assistant/prompt.py" = ["E501"]
+# Fixed git/docker argument lists, no shell; /tmp is a tmpfs INSIDE the container (ADR-0017).
+"sentinel/sandbox.py" = ["S603", "S607", "S108"]  # the system prompt is prose; wrapping it changes nothing
 # Hook patches are stdlib-only scripts that run under whatever python the user has (keep them
 # conservative: timezone.utc, bare except-pass so logging can never affect a decision).
 "docs/patches/**" = ["E501", "UP", "S110"]

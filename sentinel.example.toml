@@ -46,3 +46,11 @@ toast = true              # Windows notification for new real high/critical inci
 # daily_calls = 30
 # monthly_usd = 20.0              # also set this cap in the Anthropic console (the hard limit)
 # fallbacks = true                # server-side refusal fallback; another model may answer
+
+# Docker sandbox (v0.7b, ADR-0017): `sentinel sandbox run -- <command>` runs code with no network, in a scratch copy of the
+# tracked files without secrets. The image MUST be pinned by digest (docker image inspect prints it after docker pull).
+# [sandbox]
+# image = "python@sha256:<64 hex characters>"
+# memory = "1g"
+# cpus = "2"
+# timeout_s = 300

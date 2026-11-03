@@ -110,6 +110,33 @@ def _assistant(data: dict[str, Any]) -> AssistantSettings:
 
 
 @dataclass(frozen=True)
+class SandboxSettings:
+    """[sandbox] in sentinel.toml (ADR-0017). The image must be pinned by digest."""
+
+    image: str = ""
+    memory: str = "1g"
+    cpus: str = "2"
+    timeout_s: int = 300
+
+
+def _sandbox(data: dict[str, Any]) -> SandboxSettings:
+    sb = data.get("sandbox", {})
+    s = SandboxSettings(
+        image=str(sb.get("image", "")),
+        memory=str(sb.get("memory", "1g")),
+        cpus=str(sb.get("cpus", "2")),
+        timeout_s=int(sb.get("timeout_s", 300)),
+    )
+    if not re.fullmatch(r"[0-9]+[kmg]", s.memory):
+        raise ValueError("[sandbox] memory must look like 512m or 2g")
+    if not re.fullmatch(r"[0-9]+(\.[0-9]+)?", s.cpus):
+        raise ValueError("[sandbox] cpus must be a number")
+    if not 1 <= s.timeout_s <= 3600:
+        raise ValueError("[sandbox] timeout_s must be between 1 and 3600")
+    return s
+
+
+@dataclass(frozen=True)
 class Settings:
     scan_paths: tuple[str, ...] = ()
     extra_scan_paths: tuple[str, ...] = ()  # opt-in locations outside Git (S2); empty by default
@@ -127,6 +154,7 @@ class Settings:
     github_audit: bool = True  # branch protection / secret scanning audit of the watched repos
     github_audit_interval_hours: int = 24
     assistant: AssistantSettings = field(default_factory=AssistantSettings)
+    sandbox: SandboxSettings = field(default_factory=SandboxSettings)
     extra: dict[str, object] = field(default_factory=dict)
 
 
@@ -176,4 +204,5 @@ def load(path: Path) -> Settings:
         github_audit=bool(gh.get("audit", True)),
         github_audit_interval_hours=int(gh.get("audit_interval_hours", 24)),
         assistant=_assistant(data),
+        sandbox=_sandbox(data),
     )

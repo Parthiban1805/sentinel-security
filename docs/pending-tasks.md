@@ -85,6 +85,43 @@ Sentinel would fingerprint real keys there. Drive roots and your whole home fold
 Then approve the MCP servers you trust: `uv run sentinel inventory agents`, and for each one
 `uv run sentinel inventory set mcp-<name> --actor Parthiban --approve` (interactive terminal).
 
+## 10. Docker sandbox (v0.7b): set it up (owner)
+Built and tested with a fake Docker; a live run on your machine is the remaining check. About 10 minutes.
+1. Start **Docker Desktop**. Wait for "Engine running" and use Linux containers.
+2. Pull the image and read its digest:
+   ```
+   docker pull python:3.11-slim
+   docker image inspect --format "{{index .RepoDigests 0}}" python:3.11-slim
+   ```
+   The second command prints something like `python@sha256:<64 characters>`.
+3. Add it to `sentinel.toml`, using that exact value:
+   ```
+   [sandbox]
+   image = "python@sha256:<64 characters>"
+   ```
+4. Run `uv run sentinel sandbox check`. It must say `sandbox: ready`.
+5. **Live test** (no network, no `.env`, not root):
+   ```
+   set SENTINEL_SANDBOX_IMAGE=python@sha256:<64 characters>
+   uv run pytest -q tests\sentinel\test_sandbox.py
+   ```
+   It must show 17 passed, with none skipped.
+6. **Re-apply the gateway patch,** because the gateway learned about the sandbox:
+   - run `docs\patches\agent-gateway\apply-patch.bat`,
+   - start a new conversation,
+   - run `uv run pytest -q tests\scenarios\test_s11_agent_policy_hooks.py`,
+   - pin again with `uv run sentinel agentlog pin-hooks --actor Parthiban` (type PIN).
+7. **Docker Desktop licence (on hold):** free for personal use and for companies under 250 employees and USD 10 million
+   revenue. Until you confirm, use the sandbox for personal and evaluation work only.
+8. Optional: `uv run sentinel sandbox strict on`. From then on, code run outside the sandbox asks you first. Only you can
+   turn it off (`uv run sentinel sandbox strict off`, interactive terminal).
+
+Try it: `uv run sentinel sandbox run -- python -c "print('hello from the sandbox')"`.
+
+After step 6, the gateway also asks before any `docker` command and refuses Docker runs that reach the host. `sentinel.toml`
+and your shell profiles can then only be edited by you, not by the agent. That is intended, because `sentinel.toml` holds
+the image pin.
+
 ## 9. Agent gateway (v0.7a): DONE 2026-11-03
 Applied, pinned and drilled by the owner. 124 scenario tests pass on the live hooks, including the two former bypass tests.
 - Kill-switch drill: `git status` was refused with KS-01 while the switch was on, reading still worked, and the owner switched it

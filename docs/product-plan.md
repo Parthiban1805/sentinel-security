@@ -233,7 +233,21 @@ evidence text) to Claude or, for simulated incidents only, NVIDIA's trial API.
 The 7a exit gate is met: every action has a decision, the two bypass tests are green, the kill-switch drill passed. The limits
 listed in ADR-0016 remain until 7b.
 
-**v0.7b (sandbox for risky tools, outgoing-traffic allow-list)** needs a technology choice: Docker, WSL2 or Windows Sandbox.
+**v0.7b built (ADR-0017, 2026-11-03): Docker sandbox.**
+- `sentinel sandbox run -- <command>` runs code with no network, in a scratch copy of the tracked files without secrets,
+  as a non-root user with a read-only system and resource limits. Nothing is written back to the repo.
+- The image is pinned by digest.
+- Docker never pulls an image by itself, and the image comes only from `sentinel.toml`, which the agent cannot write.
+- The gateway asks before any Docker command and refuses Docker runs that reach the host.
+- Optional strict mode (BG-23) asks whenever code runs outside the sandbox. It is advisory: it reduces risk, but it is
+  not a security boundary.
+- After an independent review blocked the first version, sandboxed one-liners still ask like any inline code; an
+  exemption could be borrowed by a shell function.
+
+No outgoing-traffic allow-list yet (owner choice; needs its own ADR). **Pending, on the owner's side:**
+- pull and pin the image, then confirm the live test,
+- re-apply the gateway patch,
+- the Docker Desktop licence (on hold; see ADR-0017).
 
 ### v0.8: Endpoint agent and central service  [L]
 Detailed design happens here; direction is decided (plug-and-play on every employee system).

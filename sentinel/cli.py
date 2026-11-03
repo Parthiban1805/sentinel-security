@@ -4,6 +4,7 @@ import argparse
 import getpass
 import json
 import os
+import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
@@ -24,6 +25,7 @@ from sentinel import (
     onboarding,
     probes,
     runner,
+    sandbox,
 )
 from sentinel.assistant import budget as ai_budget
 from sentinel.assistant import client as ai_client
@@ -594,6 +596,80 @@ def cmd_agent_mcp_allowlist(args: argparse.Namespace) -> int:
     return 0
 
 
+def _repo_root() -> Path:
+    out = subprocess.run(  # noqa: S603
+        ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - fixed git command
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if out.returncode != 0:
+        raise ValueError("run the sandbox from inside the project's Git repository")
+    return Path(out.stdout.strip())
+
+
+def _sandbox_settings(repo: Path) -> config.SandboxSettings:
+    """Always the project's own sentinel.toml (agents cannot write it; no --config, ADR-0017)."""
+    return config.load(repo / "sentinel.toml").sandbox
+
+
+def cmd_sandbox_run(args: argparse.Namespace) -> int:
+    repo = _repo_root()
+    settings = _sandbox_settings(repo)
+    command = list(args.command)
+    if command and command[0] == "--":
+        command = command[1:]
+    limits = sandbox.Limits(
+        memory=settings.memory,
+        cpus=settings.cpus,
+        timeout_s=sandbox.check_timeout(args.timeout or settings.timeout_s),
+    )
+    result = sandbox.run(repo, settings.image, command, limits, keep=args.keep)
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
+    note = f"[sandbox: no network; {result.copied} tracked file(s) copied"
+    if result.skipped:
+        note += f", {len(result.skipped)} left out (secrets, links or large files)"
+    note += f"; exit {result.exit_code}" + ("; TIMED OUT" if result.timed_out else "") + "]"
+    print(note, file=sys.stderr)
+    if result.scratch is not None:
+        print(f"[sandbox files kept at {result.scratch}]", file=sys.stderr)
+    return result.exit_code
+
+
+def cmd_sandbox_check(args: argparse.Namespace) -> int:
+    settings = _sandbox_settings(_repo_root())
+    problems = sandbox.docker_status(settings.image)
+    if problems:
+        for p in problems:
+            print(f"- {p}")
+        print("sandbox: NOT ready")
+        return 1
+    print(f"sandbox: ready (image {settings.image}, no network)")
+    return 0
+
+
+def cmd_sandbox_strict(args: argparse.Namespace) -> int:
+    """ADR-0017: anyone may turn strict mode on; only a person turns it off."""
+    home = _home(args)
+    if args.state == "on":
+        sandbox.strict_on(home)
+        print("sandbox strict mode ON: code run outside the sandbox now needs your confirmation")
+        if not agentgate.is_project_state_dir(home):
+            print(
+                "WARNING: this is not a Claude Code project's .sentinel folder, so the gateway "
+                "will NOT see it. Run this from the project folder (or pass --home).",
+                file=sys.stderr,
+            )
+    elif args.state == "off":
+        _require_human("turning sandbox strict mode off")
+        was = sandbox.strict_off(home)
+        print("sandbox strict mode OFF" if was else "sandbox strict mode was already off")
+    else:
+        print(f"sandbox strict mode: {'ON' if sandbox.strict_status(home) else 'off'}")
+    return 0
+
+
 def cmd_agentlog_pin_hooks(args: argparse.Namespace) -> int:
     _require_human("pinning the reviewed hooks")
     home = _home(args)
@@ -1002,6 +1078,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--actor", default="", help="who turned it on (recorded)")
     p = add(agt, "mcp-allowlist", cmd_agent_mcp_allowlist, help="MCP allow-list status or off")
     p.add_argument("state", choices=["status", "off"])
+
+    sb = sub.add_parser("sandbox", help="run code in a no-network Docker sandbox (ADR-0017)")
+    sbs = sb.add_subparsers(dest="sub", required=True)
+    p = add(sbs, "run", cmd_sandbox_run, help="run one command in the sandbox")
+    p.add_argument("--timeout", type=int, help="seconds (default: [sandbox] timeout_s)")
+    p.add_argument("--keep", action="store_true", help="keep the scratch copy to read results")
+    p.add_argument("command", nargs=argparse.REMAINDER, help="-- <command and its arguments>")
+    p = add(sbs, "check", cmd_sandbox_check, help="is Docker running and the image pinned and here")
+    p = add(sbs, "strict", cmd_sandbox_strict, help="ask before code runs outside the sandbox")
+    p.add_argument("state", choices=["on", "off", "status"])
 
     ag = sub.add_parser("agentlog", help="agent decision log").add_subparsers(
         dest="sub", required=True
