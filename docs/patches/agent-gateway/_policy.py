@@ -383,12 +383,12 @@ def _has_stream(text):
 
 
 def _file_targets(tool, tool_input):
-    if tool == "Grep":
-        keys = ("path", "glob")
-    elif tool == "Glob":
-        keys = ("pattern", "path")
-    else:
-        keys = ("file_path", "notebook_path", "path")
+    # Every tool may name a file in file_path, notebook_path or path (the old hook read all three
+    # for every tool; a Grep with file_path slipped past an earlier version of this function).
+    # glob is a path filter for Grep; for Glob the pattern itself is the path.
+    keys = ("file_path", "notebook_path", "path", "glob")
+    if tool == "Glob":
+        keys = (*keys, "pattern")
     return [
         str(tool_input[k]) for k in keys if isinstance(tool_input.get(k), str) and tool_input[k]
     ]

@@ -416,3 +416,14 @@ def test_kill_switch_warns_when_the_gateway_cannot_see_it(
     assert main(["--home", str(project / ".sentinel"), "agent", "kill-switch", "on"]) == 0
     captured = capsys.readouterr()
     assert "will NOT see it" not in captured.err and "project" in captured.out
+
+
+@pytest.mark.parametrize("key", ["file_path", "path", "glob"])
+@pytest.mark.parametrize("tool", ["Read", "Grep", "Glob", "Edit"])
+def test_every_file_tool_checks_every_place_a_path_can_appear(
+    tmp_path: Path, tool: str, key: str
+) -> None:
+    """A Grep with file_path slipped past the first version (found when the owner applied the patch)."""
+    d = decide(tmp_path, tool, **{key: "/home/u/.aws/credentials"})
+    assert (d.decision, d.rule) == ("deny", "PF-05"), (tool, key)
+    assert decide(tmp_path, tool, **{key: "README.md"}).decision == "allow"
