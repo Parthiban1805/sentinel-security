@@ -35,6 +35,10 @@ _UNKNOWNS: dict[str, tuple[str, ...]] = {
     "R4": ("Whether the volume comes from credential abuse or from legitimate load.",),
     "R6": ("Whether the session was stolen or the user changed device or location.",),
     "R7": ("Where the decoy was read and by whom.",),
+    "R9": (
+        "Which process touched the decoy (the gateway only sees tool calls, not what they start).",
+        "Whether the agent session started a script or program in that window.",
+    ),
 }
 
 

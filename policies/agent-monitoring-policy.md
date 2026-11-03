@@ -12,9 +12,10 @@ Status: **approved as written** (owner sign-off below, 2026-10-31). In force on 
 | Recorded | Not recorded |
 |---|---|
 | A blocked action: time, tool name, stable rule id (for example BG-01), a class (for example `network_tool`) | The command text, file paths, tool arguments, prompts or model output |
-| A call to an MCP tool: time, tool name (`mcp__<server>__<tool>`) | Ordinary allowed tool calls (reads, edits, normal commands) |
+| A call to an MCP tool: time, tool name (`mcp__<server>__<tool>`) | The content of an allowed call: what was read, edited or run |
+| **Since v0.7a (ADR-0016): every tool call** as a decision: time, tool name, decision (allow, ask or deny), rule id and class (for example `file_access`, `command`) | The command text, file path or arguments of any call, allowed or not |
 | A session start (heartbeat) | The content of any session |
-| A hashed session id and a keyed fingerprint of the blocked target (cannot be reversed without the local key) | The raw session id or the raw target |
+| A hashed session id and a keyed fingerprint of the target: a file path, or for commands the command text (cannot be reversed without the local key; someone holding the key could confirm a guessed short command) | The raw session id or the raw target |
 
 ## 3. Where it lives and who can see it
 - A file on the developer's own machine: `<project>/.sentinel/agent-decisions.jsonl`. It is not uploaded anywhere in the current
@@ -41,5 +42,11 @@ Reviewed every 6 months or whenever the recorded fields change (a change to sect
 ## Sign-off
 Owner: Parthiban  Date: 2026-10-31  Decision: [x] approved as written  [ ] approved with changes  [ ] rejected
 (Approval given in the Claude Code chat in answer to a yes/no question; recorded here by Claude.)
+
+**Amendment 2026-11-03 (ADR-0016, v0.7a agent gateway):** section 2 now also records every tool call as a decision. Only the
+tool name, decision, rule id, class and a keyed fingerprint of the target are recorded, never the command, path or
+arguments. Allowed file-tool calls (Read, Edit, Write, Grep, Glob) and "ask" decisions also become events in Sentinel's local
+store, so rule R9 can tell whether the gateway saw a call on a decoy file. Approved by the owner in the Claude Code chat
+("go 7a", accepting the recommendation to log allowed actions without their content). Recorded here by Claude.
 
 All generated content requires human review before use.

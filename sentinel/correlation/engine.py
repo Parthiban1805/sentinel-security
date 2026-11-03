@@ -11,6 +11,7 @@ from sentinel.correlation.rules import (
     r6_login_then_credential,
     r7_canary,
     r8_workflow_change_before_release,
+    r9_ungated_sensitive_access,
     r10_exposed_sensitive_path,
     r11_use_after_revocation,
 )
@@ -28,6 +29,7 @@ RULES = (
     r6_login_then_credential,
     r7_canary,
     r8_workflow_change_before_release,
+    r9_ungated_sensitive_access,
 )
 
 

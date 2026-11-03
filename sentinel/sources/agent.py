@@ -84,8 +84,11 @@ class AgentLogSource(DeferredState):
     @staticmethod
     def _event(record: dict[str, Any], chain_id: str, asset_id: str) -> dict[str, Any] | None:
         decision = record["decision"]
-        if decision not in ("deny", "allow_mcp"):
-            return None  # session_start heartbeat, or a decision type this version does not know
+        # ADR-0016: the gateway records every call. Plain allowed calls become events only for file
+        # tools (rule R9 joins decoy touches on their path fingerprint); "ask" always does.
+        allowed_file = decision == "allow" and record.get("target_class") == "file_access"
+        if decision not in ("deny", "allow_mcp", "ask") and not allowed_file:
+            return None  # session_start heartbeat, other allowed calls, or an unknown decision
         session = str(record["session"])
         attrs: dict[str, Any] = {
             # the hooks write a 16-hex hash (or "" when no id was given); anything else is dropped

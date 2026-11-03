@@ -172,11 +172,15 @@ def test_r5c_approval_needs_the_exact_name() -> None:
     assert r5c_unapproved_mcp_server(scenarios.unapproved_mcp("GitHub", "a", T0), ctx) == []
 
 
-def test_r5c_a_server_name_with_double_underscores_is_matched_by_prefix() -> None:
-    """Approved `git` + tool `hub__x` -> mcp__git__hub__x must count as the approved server."""
+def test_r5c_an_ambiguous_double_underscore_name_is_not_the_approved_server() -> None:
+    """mcp__git__hub__x is ambiguous: tool 'hub__x' of 'git', or a server named 'git__hub'.
+    Changed 2026-11-03 (ADR-0016, security review): the gateway and R5c both read the server as
+    everything before the LAST '__', so a server named 'git__hub' cannot pass as the approved
+    'git'. The cost is an alert for a legitimate tool whose own name contains '__'."""
     event = scenarios.unapproved_mcp("git", "a", T0)[0]
     event["attributes"]["tool"] = "mcp__git__hub__x"
-    event["attributes"]["mcp_server"] = "git__hub"  # what rpartition would have guessed
-    assert (
-        r5c_unapproved_mcp_server([event], Context(approved_mcp_servers=frozenset({"git"}))) == []
-    )
+    event["attributes"]["mcp_server"] = "git__hub"
+    [match] = r5c_unapproved_mcp_server([event], Context(approved_mcp_servers=frozenset({"git"})))
+    assert match.rule_id == "R5c"
+    plain = scenarios.unapproved_mcp("git", "a", T0)  # mcp__git__read_file: the approved server
+    assert r5c_unapproved_mcp_server(plain, Context(approved_mcp_servers=frozenset({"git"}))) == []

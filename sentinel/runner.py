@@ -184,7 +184,7 @@ def run_once(
                 health[name] = "warn: " + gaps[0]
 
     if store.docs("canaries"):  # tripwire pass over armed decoys (stat only; never reads them)
-        guard("canary:check", lambda: add(canaries.check(store, now)))
+        guard("canary:check", lambda: add(canaries.check(store, now, key)))
 
     if settings.github_repos or settings.github_user_keys:
         github_credential: str | None = None

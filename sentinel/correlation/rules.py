@@ -438,8 +438,10 @@ def r5b_repeated_agent_denials(events: list[Event], ctx: Context) -> list[Match]
 
 
 def _approved_prefix(tool: str, approved: frozenset[str]) -> bool:
-    """Exact match on `mcp__<approved name>__`: no slugging, no guessing where the name ends."""
-    return any(tool.startswith(f"mcp__{name}__") for name in approved)
+    """Exact server name: everything before the LAST '__', parsed the same way as the gateway
+    (security review 2026-11-03: a server named 'github__x' is not the approved 'github')."""
+    rest = tool[len("mcp__") :]
+    return "__" in rest and rest.rsplit("__", 1)[0] in approved
 
 
 def r5c_unapproved_mcp_server(events: list[Event], ctx: Context) -> list[Match]:
@@ -486,6 +488,89 @@ def r5c_unapproved_mcp_server(events: list[Event], ctx: Context) -> list[Match]:
                 first_time=calls[0]["time"],
                 last_time=calls[-1]["time"],
                 is_test=calls[0]["is_test"],
+            )
+        )
+    return matches
+
+
+_CONTENT_TOOLS = frozenset({"Read", "Grep", "Edit", "MultiEdit", "Write", "NotebookEdit"})
+
+
+def _gateway_saw_content(event: Event) -> bool:
+    """An allowed gateway decision by a tool that reads or writes file content."""
+    attrs = event.get("attributes") or {}
+    return (
+        event["event_type"] == "agent_tool_allowed"
+        and attrs.get("decision") == "allow"
+        and str(attrs.get("tool", "")) in _CONTENT_TOOLS
+    )
+
+
+def r9_ungated_sensitive_access(events: list[Event], ctx: Context) -> list[Match]:
+    """R9 (S11, S13; ADR-0016): a decoy was touched while an agent session was active on this
+    machine, and no agent-gateway decision covers the decoy's path. Something outside the gateway
+    touched it. Needs decoy events that carry the path fingerprint (canaries.check with the key)."""
+    agent = [
+        e
+        for e in events
+        if e["source"] == "agent_hook"
+        and e["event_type"] in ("agent_tool_allowed", "agent_tool_denied")
+    ]
+    matches: list[Match] = []
+    for c in events:
+        if c["event_type"] != "canary_triggered":
+            continue
+        attrs = c.get("attributes") or {}
+        fp = str(attrs.get("location_fp") or "")
+        if not fp:
+            continue
+        window = [a for a in agent if timedelta(0) <= _ts(c) - _ts(a) <= ctx.config.r9_lookback]
+        if not window:
+            continue  # no agent session active: R7 covers decoy touches on their own
+        on_decoy = [a for a in window if (a.get("attributes") or {}).get("target_fp") == fp]
+        # Only an ALLOWED call by a tool that reads or writes content explains the touch. A denied
+        # call, or a listing (LS, Glob), does not: the agent then touching the file by other means
+        # is exactly what R9 is for (security review, 2026-11-03).
+        if any(_gateway_saw_content(a) for a in on_decoy):
+            continue
+        denied_first = [a for a in on_decoy if a["event_type"] == "agent_tool_denied"]
+        window.sort(key=lambda a: (_ts(a), a["event_id"]))
+        minutes = int(ctx.config.r9_lookback.total_seconds() // 60)
+        involved = [*window[-5:], c]  # the latest gateway decisions, then the decoy event
+        matches.append(
+            Match(
+                rule_id="R9",
+                key=f"R9:{c['event_id']}",
+                title=f"Decoy touched during an agent session without a gateway decision "
+                f"on {c['asset_id']}",
+                severity_floor="high",
+                # A denied call on the very same decoy shortly before raises confidence.
+                confidence="high" if denied_first else "medium",
+                facts=(
+                    f"A decoy event ({attrs.get('reason', 'used')}) was recorded at {c['time']}.",
+                    f"The agent gateway recorded {len(window)} decision(s) in the {minutes} "
+                    "minutes before it, none that allowed reading or writing the decoy.",
+                    *(
+                        (
+                            f"The gateway DENIED {len(denied_first)} call(s) on the decoy's path "
+                            "in that window.",
+                        )
+                        if denied_first
+                        else ()
+                    ),
+                ),
+                hypotheses=(
+                    "A script or program started during the agent session touched the decoy "
+                    "outside the gateway.",
+                    "Another process, such as a backup job or scanner, touched it in the same "
+                    "period; the timing alone does not show which.",
+                ),
+                event_ids=tuple(e["event_id"] for e in involved),
+                asset_id=c["asset_id"],
+                first_time=window[0]["time"],
+                last_time=c["time"],
+                is_test=_is_test(involved),
+                cred_ref=c.get("credential_ref"),
             )
         )
     return matches

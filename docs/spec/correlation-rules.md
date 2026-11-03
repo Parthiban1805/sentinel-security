@@ -160,3 +160,26 @@ id, the tool name, a stable rule id, a class and a keyed target fingerprint.
 
 All rules are pure functions, deterministic and order independent. Events with `is_test: true` produce test
 incidents that are counted in metrics only.
+
+## Implemented in v0.7a (agent gateway; tests in `tests/sentinel/test_gateway.py`, ADR-0016)
+
+### R9: a decoy touched during an agent session, with no gateway decision for it (S11, S13)
+- **Inputs:**
+  - `canary_triggered` events that carry `attributes.location_fp`. That is the decoy path's fingerprint, computed with
+    the same key and normalisation as the gateway; `canaries.check` adds it when the key exists.
+  - Agent-gateway events (`agent_tool_allowed` and `agent_tool_denied` from `agent_hook`) with `attributes.target_fp`.
+- **Window:** gateway decisions in the `r9_lookback` (30 minutes [confirm]) BEFORE the decoy event. The look-back covers
+  the 15-minute canary check interval, because the event time is the check time, not the access time.
+- **Match:** at least one gateway decision in the window (an agent session was active), and none of them has the decoy's
+  fingerprint. The gateway did not see a call on that file, so something outside it touched the decoy.
+- **Not a match:**
+  - no agent activity in the window (R7 alone covers decoys),
+  - a decision that covers the decoy (the gateway saw it),
+  - agent activity only after the decoy event,
+  - a decoy event without a fingerprint.
+- **Rating:**
+  - Severity high, confidence medium.
+  - Hypotheses: a program started in the session touched it outside the gateway, or a backup job or scanner did. Timing
+    alone does not decide which.
+- **Response:** review the agent session and identify the process (both required); the kill switch is optional and
+  needs approval.

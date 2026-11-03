@@ -85,6 +85,23 @@ Sentinel would fingerprint real keys there. Drive roots and your whole home fold
 Then approve the MCP servers you trust: `uv run sentinel inventory agents`, and for each one
 `uv run sentinel inventory set mcp-<name> --actor Parthiban --approve` (interactive terminal).
 
+## 9. Agent gateway (v0.7a): apply the patch (owner)
+Everything is built and tested against the patch files. The hooks are protected, so you apply it:
+1. Run `docs\patchesgent-gatewaypply-patch.bat`. It backs up first and restores on any error.
+2. Start a new Claude Code conversation (or Reload Window).
+3. Run `uv run pytest -q tests\scenarios	est_s11_agent_policy_hooks.py`. The two "known bypass" tests on the live hooks must
+   now pass.
+4. Run `uv run sentinel agentlog pin-hooks --actor Parthiban` (interactive terminal), so `doctor` stops reporting changed hooks.
+5. **Kill-switch drill:**
+   - `uv run sentinel agent kill-switch on`
+   - Ask Claude to run `git status`: it must be refused (KS-01).
+   - `uv run sentinel agent kill-switch off`
+6. **MCP servers you trust:**
+   `uv run sentinel inventory set mcp-<name> --approve --owner <you> --pinned-version <version> --actor Parthiban`
+   (interactive terminal). Once one server is approved, calls to unapproved servers are blocked.
+
+Expect a confirmation prompt when a command runs inline code (for example `python -c`). That is BG-15 working.
+
 ## 8. AI assistant (v0.6): DONE 2026-11-03
 Run 4: mean 4.55, 0 made-up claims, 0 injection followed. Gate met, and the owner's spot-check of case 09 was ok.
 

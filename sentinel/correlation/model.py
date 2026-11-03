@@ -11,6 +11,9 @@ class Config:
     r8_window: timedelta = timedelta(hours=24)  # [confirm]
     r5b_count: int = 3  # denials in one agent session [confirm on real log data]
     r5b_window: timedelta = timedelta(minutes=30)  # [confirm on real log data]
+    # R9: gateway decisions this long BEFORE a decoy event count as "an agent session was active".
+    # Covers the 15-minute canary check interval (the event time is the check time). [confirm]
+    r9_lookback: timedelta = timedelta(minutes=30)
 
 
 @dataclass(frozen=True)

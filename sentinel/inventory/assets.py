@@ -114,8 +114,10 @@ def update_asset(
     approved: bool | None = None,
     importance: str | None = None,
     monitoring: str | None = None,
+    attributes: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Set an asset's owner/approval/importance/monitoring (validated, audited, human-driven)."""
+    """Set an asset's owner/approval/importance/monitoring, and optionally merge string
+    attributes (validated, audited, human-driven)."""
     if importance is not None and importance not in _IMPORTANCE:
         raise ValueError(f"importance must be one of {_IMPORTANCE}")
     if monitoring is not None and monitoring not in _MONITORING:
@@ -135,6 +137,14 @@ def update_asset(
         if value is not None and asset.get(field) != value:
             changes[field] = {"from": asset.get(field), "to": value}
             asset[field] = value
+    current = dict(asset.get("attributes") or {})
+    for name, value in (attributes or {}).items():
+        value = check_free_text(name, value) or ""
+        if current.get(name) != value:
+            changes[f"attributes.{name}"] = {"from": current.get(name), "to": value}
+            current[name] = value
+    if attributes:
+        asset["attributes"] = current
     if changes:
         asset["last_seen"] = format_time(now)
         store.upsert_asset(asset)  # validates against the asset schema

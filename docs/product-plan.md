@@ -216,6 +216,18 @@ evidence text) to Claude or, for simulated incidents only, NVIDIA's trial API.
   sensitive actions; sandboxed risky tools (container or VM, egress allowlist); R9 (sensitive access with no decision);
   MCP allowlist with owner, pinned version and review; kill switch; injection suite in CI.
 - **Exit:** every in-scope agent action has a decision; the two recorded hook-bypass tests turn green; kill-switch drill passes.
+**v0.7a built (ADR-0016, 2026-11-03), split from 7b by the owner:**
+- One gateway hook decides every Claude Code tool call and records every decision (no content).
+- Inline interpreter code needs the user's confirmation (BG-15); encoded PowerShell is denied.
+- Kill switch, with a drill test.
+- MCP allow-list with owner, pinned version and review date, enforced by the gateway.
+- R9: a decoy touched during an agent session with no gateway decision.
+- Injection suite in the CI test job.
+
+**Pending, on the owner's side:** apply `docs/patches/agent-gateway/apply-patch.bat`. The two live-hook bypass tests turn green
+when it is applied; they are already green against the patch. Then pin the hooks and run the live kill-switch drill.
+
+**v0.7b (sandbox for risky tools, outgoing-traffic allow-list)** needs a technology choice: Docker, WSL2 or Windows Sandbox.
 
 ### v0.8: Endpoint agent and central service  [L]
 Detailed design happens here; direction is decided (plug-and-play on every employee system).

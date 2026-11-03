@@ -25,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from sentinel.agentgate import path_fingerprint
 from sentinel.events.schema import format_time, make_event
 from sentinel.scanners.gitleaks import Finding, scan_base
 from sentinel.security import fingerprint
@@ -180,12 +181,19 @@ def plant(
 
 
 def _event(
-    doc: dict[str, Any], reason: str, now: datetime, detail: str, location: str = ""
+    doc: dict[str, Any],
+    reason: str,
+    now: datetime,
+    detail: str,
+    location: str = "",
+    location_fp: str = "",
 ) -> dict[str, Any]:
     severity, confidence = REASONS[reason]
     attrs: dict[str, Any] = {"canary_id": doc["canary_id"], "reason": reason, "kind": doc["kind"]}
     if location:
         attrs["location"] = location
+    if location_fp:
+        attrs["location_fp"] = location_fp  # same fingerprint the agent gateway records (R9 join)
     return make_event(
         event_type="canary_triggered",
         source="canary",
@@ -200,30 +208,32 @@ def _event(
     )
 
 
-def check(store: Store, now: datetime) -> list[dict[str, Any]]:
+def check(store: Store, now: datetime, key: bytes | None = None) -> list[dict[str, Any]]:
     """Tripwire pass over armed decoys. Uses stat() only: reading a decoy would move its access
-    time and fake a 'read'."""
+    time and fake a 'read'. With the fingerprint key, events carry the decoy path's fingerprint as
+    the agent gateway records it, so rule R9 can tell whether a gateway decision covered it."""
     events: list[dict[str, Any]] = []
     for doc in store.docs("canaries"):
         if doc["status"] == "disarmed":
             continue
         path = Path(doc["path"])
+        fp = path_fingerprint(doc["path"], key) if key else ""
         if not path.exists():
             if "removed" not in doc["triggers"]:
-                events.append(_event(doc, "removed", now, "gone"))
+                events.append(_event(doc, "removed", now, "gone", location_fp=fp))
                 doc["triggers"].append("removed")
                 doc["status"] = "triggered"
             store.put_doc("canaries", doc["canary_id"], doc)
             continue
         st = path.stat()
         if (st.st_size, st.st_mtime_ns) != (doc["size"], doc["mtime_ns"]):
-            events.append(_event(doc, "modified", now, str(st.st_mtime_ns)))
+            events.append(_event(doc, "modified", now, str(st.st_mtime_ns), location_fp=fp))
             doc["size"], doc["mtime_ns"] = st.st_size, st.st_mtime_ns
             if "modified" not in doc["triggers"]:
                 doc["triggers"].append("modified")
             doc["status"] = "triggered"
         if st.st_atime_ns > doc["atime_ns"]:
-            events.append(_event(doc, "read", now, str(st.st_atime_ns)))
+            events.append(_event(doc, "read", now, str(st.st_atime_ns), location_fp=fp))
             doc["atime_ns"] = st.st_atime_ns  # advance so the same access is reported once
         store.put_doc("canaries", doc["canary_id"], doc)
     return events

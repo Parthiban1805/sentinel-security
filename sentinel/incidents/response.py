@@ -185,6 +185,26 @@ _PLANS: dict[str, tuple[_Step, ...]] = {
             True,
         ),
     ),
+    "R9": (
+        (
+            "review_agent_session",
+            "Review what the agent session ran in the window (commands started, scripts written)",
+            "investigate_first",
+            True,
+        ),
+        (
+            "identify_decoy_reader",
+            "Find the process that touched the decoy (host audit or file-access logs)",
+            "investigate_first",
+            True,
+        ),
+        (
+            "engage_kill_switch",
+            "Turn the agent kill switch on until the source is known (agent kill-switch on)",
+            "approval_required",
+            False,
+        ),
+    ),
     "R5c": (
         (
             "review_mcp_server",

@@ -12,6 +12,7 @@ from typing import Any
 
 from sentinel import (
     __version__,
+    agentgate,
     agentlog,
     audit,
     canaries,
@@ -34,6 +35,7 @@ from sentinel.incidents.response import DryRunAdapter
 from sentinel.inventory import agents as agent_inventory
 from sentinel.inventory import assets as inventory
 from sentinel.inventory.blast import link
+from sentinel.redaction import check_free_text
 from sentinel.reporting import markdown
 from sentinel.scanners import gitleaks
 from sentinel.security import fingerprint, load_existing_key, load_key
@@ -436,16 +438,23 @@ def cmd_report(args: argparse.Namespace) -> int:
 def cmd_inventory_set(args: argparse.Namespace) -> int:
     store = _store(args)
     target = next((a for a in store.assets() if a["asset_id"] == args.asset), None)
-    if (
-        (args.approve or args.unapprove)
-        and target
-        and target["asset_type"]
-        in (
-            "mcp_server",
-            "ai_agent",
-        )
-    ):
-        _require_human("approving an MCP server or AI agent")
+    if target and target["asset_type"] in ("mcp_server", "ai_agent"):
+        # Any change to an MCP server or AI agent feeds the gateway's allow-list (ADR-0016).
+        _require_human("changing an MCP server or AI agent in the inventory")
+    is_mcp = bool(target and target["asset_type"] == "mcp_server")
+    attributes: dict[str, str] = {}
+    if args.pinned_version is not None:
+        if not is_mcp:
+            raise ValueError("--pinned-version applies to MCP servers only")
+        attributes["pinned_version"] = args.pinned_version
+    if is_mcp and args.approve and target is not None:
+        # ADR-0016: an approved MCP server has a named owner, a pinned version and a review date.
+        attrs = target.get("attributes") or {}
+        if not (args.owner or target.get("owner")):
+            raise ValueError("approving an MCP server needs --owner")
+        if not (args.pinned_version or attrs.get("pinned_version")):
+            raise ValueError("approving an MCP server needs --pinned-version (reviewed version)")
+        attributes["reviewed"] = _now().strftime("%Y-%m-%d")
     asset = inventory.update_asset(
         store,
         args.asset,
@@ -455,7 +464,15 @@ def cmd_inventory_set(args: argparse.Namespace) -> int:
         approved=True if args.approve else (False if args.unapprove else None),
         importance=args.importance,
         monitoring=args.monitoring,
+        attributes=attributes or None,
     )
+    if is_mcp:
+        written = agentgate.write_mcp_allowlist(store, _home(args))
+        print(
+            f"gateway MCP allow-list: {len(agentgate.mcp_allowlist(store))} server(s)"
+            if written
+            else "gateway MCP allow-list: none approved, so MCP calls are recorded but not blocked"
+        )
     print(
         f"{asset['asset_id']}: owner={asset.get('owner')} approved={asset.get('approved')} "
         f"importance={asset['importance']} monitoring={asset['monitoring']}"
@@ -529,6 +546,52 @@ def _require_human(action: str) -> None:
     """Approvals and pins decide what Sentinel trusts; an agent must not make them for itself."""
     if not sys.stdin.isatty():
         raise ValueError(f"{action} needs a human at an interactive terminal (refusing)")
+
+
+def cmd_agent_kill_switch(args: argparse.Namespace) -> int:
+    """ADR-0016: anyone (an agent too) may turn it on; only a person at a terminal turns it off."""
+    home = _home(args)
+    if args.state == "on":
+        path = agentgate.kill_switch_on(home, check_free_text("actor", args.actor) or "", _now())
+        print(f"agent kill switch ON ({path.resolve()}): the gateway now refuses every tool except")
+        print("reading, for Claude Code sessions of this project only.")
+        if not agentgate.is_project_state_dir(home):
+            print(
+                "WARNING: this is not a Claude Code project's .sentinel folder, so the gateway "
+                "will NOT see it. Run this from the project folder (or pass --home).",
+                file=sys.stderr,
+            )
+    elif args.state == "off":
+        _require_human("turning the agent kill switch off")
+        was_on = agentgate.kill_switch_off(home)
+        print("agent kill switch OFF" if was_on else "agent kill switch was already off")
+    else:
+        status = agentgate.kill_switch_status(home)
+        if status is None:
+            print("agent kill switch: off")
+        else:
+            print(f"agent kill switch: ON since {status.get('on_since', '?')}")
+    return 0
+
+
+def cmd_agent_mcp_allowlist(args: argparse.Namespace) -> int:
+    home = _home(args)
+    path = home / agentgate.MCP_ALLOWLIST_NAME
+    if args.state == "off":
+        _require_human("switching the MCP allow-list off")
+        was_on = agentgate.mcp_allowlist_off(home)
+        print(
+            "MCP allow-list OFF: every MCP server is allowed again and recorded"
+            if was_on
+            else "MCP allow-list was already off"
+        )
+        return 0
+    if not path.exists():
+        print("MCP allow-list: off (MCP calls are recorded, not blocked)")
+    else:
+        names = sorted(agentgate.mcp_allowlist(_store(args)))
+        print(f"MCP allow-list: ON, approved: {', '.join(names) or 'none (every server blocked)'}")
+    return 0
 
 
 def cmd_agentlog_pin_hooks(args: argparse.Namespace) -> int:
@@ -659,7 +722,12 @@ def cmd_canary_list(args: argparse.Namespace) -> int:
 
 def cmd_canary_check(args: argparse.Namespace) -> int:
     store = _store(args)
-    events = canaries.check(store, _now())
+    try:
+        key: bytes | None = load_existing_key(_home(args))
+    except ValueError:
+        key = None  # no key yet: events still work, just without the R9 path fingerprint
+        print("note: no fingerprint key yet, so rule R9 cannot match decoys to gateway decisions")
+    events = canaries.check(store, _now(), key)
     stored = sum(store.add_event(e) for e in events)
     for e in events:
         a = e["attributes"]
@@ -919,11 +987,21 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--unapprove", action="store_true")
     p.add_argument("--importance", choices=["low", "medium", "high", "critical"])
     p.add_argument("--monitoring", choices=["none", "partial", "full"])
+    p.add_argument("--pinned-version", help="MCP servers: the reviewed version (ADR-0016)")
     p = add(inv, "alias", cmd_inventory_alias, help="map a provider key id to a credential ref")
     p.add_argument("cred_ref")
     p.add_argument("--project", required=True, help="GCP project id")
     p.add_argument("--credential-id", required=True, help="key uid or 'apikey:<uid>'")
     p.add_argument("--actor", required=True)
+
+    agt = sub.add_parser("agent", help="agent gateway controls (ADR-0016)").add_subparsers(
+        dest="sub", required=True
+    )
+    p = add(agt, "kill-switch", cmd_agent_kill_switch, help="refuse every agent tool but reading")
+    p.add_argument("state", choices=["on", "off", "status"])
+    p.add_argument("--actor", default="", help="who turned it on (recorded)")
+    p = add(agt, "mcp-allowlist", cmd_agent_mcp_allowlist, help="MCP allow-list status or off")
+    p.add_argument("state", choices=["status", "off"])
 
     ag = sub.add_parser("agentlog", help="agent decision log").add_subparsers(
         dest="sub", required=True
