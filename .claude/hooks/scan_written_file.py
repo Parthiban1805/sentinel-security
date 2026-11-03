@@ -5,6 +5,7 @@ Lightweight regex net; gitleaks in pre-commit and CI is the authoritative scanne
 Findings are reported by fingerprint only; the secret value is never printed.
 Exit code 2 sends the message back to Claude so it can remove the value.
 """
+
 import hashlib
 import json
 import re

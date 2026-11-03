@@ -71,36 +71,27 @@
       "Bash(gcloud:*)",
       "Bash(az:*)",
       "Bash(kubectl:*)",
-      "Bash(terraform apply:*)"
+      "Bash(terraform apply:*)",
+      "Write(./.claude/settings.json)",
+      "Write(./.claude/hooks/**)",
+      "Edit(./.claude/settings.local.json)",
+      "Write(./.claude/settings.local.json)",
+      "Edit(./.mcp.json)",
+      "Write(./.mcp.json)",
+      "Edit(~/.claude.json)",
+      "Write(~/.claude.json)",
+      "Read(~/.claude.json)"
     ]
   },
   "enableAllProjectMcpServers": false,
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Read|Edit|MultiEdit|Write|Grep|Glob",
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/protect_sensitive_files.py\""
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/bash_guard.py\""
-          }
-        ]
-      },
-      {
-        "matcher": "mcp__.*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/mcp_log.py\""
+            "command": "python -I \"$CLAUDE_PROJECT_DIR/.claude/hooks/gateway.py\""
           }
         ]
       }
@@ -111,7 +102,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/scan_written_file.py\""
+            "command": "python -I \"$CLAUDE_PROJECT_DIR/.claude/hooks/scan_written_file.py\""
           }
         ]
       }
@@ -122,7 +113,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_log.py\""
+            "command": "python -I \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_log.py\""
           }
         ]
       }

@@ -224,8 +224,14 @@ evidence text) to Claude or, for simulated incidents only, NVIDIA's trial API.
 - R9: a decoy touched during an agent session with no gateway decision.
 - Injection suite in the CI test job.
 
-**Pending, on the owner's side:** apply `docs/patches/agent-gateway/apply-patch.bat`. The two live-hook bypass tests turn green
-when it is applied; they are already green against the patch. Then pin the hooks and run the live kill-switch drill.
+**v0.7a done (2026-11-03).** The owner applied the patch and the checks on the live hooks passed:
+- 124 scenario tests pass, including the two former bypass tests.
+- Kill-switch drill: `git status` refused (KS-01), reading still allowed, switched off by the owner.
+- The owner pinned the hooks.
+- Applying it found a real gap (a Grep naming a secret in `file_path`). It is fixed and tested for every file tool.
+
+The 7a exit gate is met: every action has a decision, the two bypass tests are green, the kill-switch drill passed. The limits
+listed in ADR-0016 remain until 7b.
 
 **v0.7b (sandbox for risky tools, outgoing-traffic allow-list)** needs a technology choice: Docker, WSL2 or Windows Sandbox.
 

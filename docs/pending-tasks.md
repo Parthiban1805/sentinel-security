@@ -85,22 +85,20 @@ Sentinel would fingerprint real keys there. Drive roots and your whole home fold
 Then approve the MCP servers you trust: `uv run sentinel inventory agents`, and for each one
 `uv run sentinel inventory set mcp-<name> --actor Parthiban --approve` (interactive terminal).
 
-## 9. Agent gateway (v0.7a): apply the patch (owner)
-Everything is built and tested against the patch files. The hooks are protected, so you apply it:
-1. Run `docs\patchesgent-gatewaypply-patch.bat`. It backs up first and restores on any error.
-2. Start a new Claude Code conversation (or Reload Window).
-3. Run `uv run pytest -q tests\scenarios	est_s11_agent_policy_hooks.py`. The two "known bypass" tests on the live hooks must
-   now pass.
-4. Run `uv run sentinel agentlog pin-hooks --actor Parthiban` (interactive terminal), so `doctor` stops reporting changed hooks.
-5. **Kill-switch drill:**
-   - `uv run sentinel agent kill-switch on`
-   - Ask Claude to run `git status`: it must be refused (KS-01).
-   - `uv run sentinel agent kill-switch off`
-6. **MCP servers you trust:**
-   `uv run sentinel inventory set mcp-<name> --approve --owner <you> --pinned-version <version> --actor Parthiban`
-   (interactive terminal). Once one server is approved, calls to unapproved servers are blocked.
+## 9. Agent gateway (v0.7a): DONE 2026-11-03
+Applied, pinned and drilled by the owner. 124 scenario tests pass on the live hooks, including the two former bypass tests.
+- Kill-switch drill: `git status` was refused with KS-01 while the switch was on, reading still worked, and the owner switched it
+  off.
+- The drill and the apply found a real gap (a Grep naming a secret in `file_path`). It is fixed and tested for every file tool.
 
-Expect a confirmation prompt when a command runs inline code (for example `python -c`). That is BG-15 working.
+**Still open (optional):**
+- Approve the MCP servers you trust, in an interactive terminal:
+  `uv run sentinel inventory set mcp-<name> --approve --owner <you> --pinned-version <version> --actor Parthiban`.
+  Until one is approved, MCP calls are recorded but not blocked.
+- Expect a confirmation prompt when a command runs inline code (for example `python -c`). That is BG-15 working.
+- To undo the gateway, put the newest backup-before-gateway folder back (its hook files and settings.json) over the live ones.
+- If the gateway blocks something you need, tell the agent; some commands that name protected folders and a write verb in
+  one line are refused on purpose (BG-20).
 
 ## 8. AI assistant (v0.6): DONE 2026-11-03
 Run 4: mean 4.55, 0 made-up claims, 0 injection followed. Gate met, and the owner's spot-check of case 09 was ok.
