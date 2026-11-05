@@ -128,8 +128,14 @@ def _is_sensitive(path: str) -> bool:
 
 
 def check_files(repo: Path) -> list[Finding]:
-    tracked = _names(_git(repo, "ls-files", "-z").stdout)
-    untracked = _names(_git(repo, "ls-files", "-z", "--others", "--exclude-standard").stdout)
+    listed = _git(repo, "ls-files", "-z")
+    others = _git(repo, "ls-files", "-z", "--others", "--exclude-standard")
+    if listed.returncode != 0 or others.returncode != 0:
+        # A failed listing (unsafe-directory rule, corrupt repository) is NOT an empty repository:
+        # reading it as clean would report "no findings" for something that was never checked.
+        raise ValueError(f"git could not list the files of {repo.name}; hygiene was not checked")
+    tracked = _names(listed.stdout)
+    untracked = _names(others.stdout)
     out: list[Finding] = []
     for path in tracked:
         if _is_sensitive(path):

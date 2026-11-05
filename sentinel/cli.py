@@ -41,7 +41,7 @@ from sentinel.inventory import assets as inventory
 from sentinel.inventory import credentials, graph
 from sentinel.inventory.blast import link
 from sentinel.redaction import check_free_text
-from sentinel.reporting import markdown
+from sentinel.reporting import markdown, posture
 from sentinel.scanners import gitleaks
 from sentinel.security import fingerprint, load_existing_key, load_key
 from sentinel.simulation import evalset, scenarios
@@ -689,6 +689,48 @@ def cmd_agent_kill_switch(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_posture(args: argparse.Namespace) -> int:
+    """Three separate indicators with evidence, and no overall score (ADR-0021).
+
+    Exit codes: 0 report produced; with --check: 2 an indicator needs attention, 3 nothing could
+    be measured. 1 is the generic error code."""
+    home = _home(args)
+    if not (home / "sentinel.db").exists():
+        # A read-only report must not create state: a mistyped --home would leave an empty store.
+        raise ValueError(f"no Sentinel state in {home} (run `sentinel run` first, or pass --home)")
+    settings = config.load(Path(args.config))
+    hygiene_results: dict[str, Sequence[hygiene.Finding]] | None = None
+    skipped: list[str] = []
+    if not args.no_hygiene and settings.scan_paths:
+        hygiene_results = {}
+        for raw in settings.scan_paths:
+            repo = Path(raw)
+            asset_id = inventory.asset_id_for(repo)
+            if not (repo / ".git").exists():
+                skipped.append(asset_id)
+                continue
+            try:
+                hygiene_results[asset_id] = hygiene.scan_repo(repo, tuple(settings.hygiene_ignore))
+            except (OSError, ValueError):
+                skipped.append(asset_id)  # git could not read it: not measured, never "clean"
+    checks = doctor.run_checks(home, Path(args.config), Path.cwd())
+    report = posture.build(
+        _store(args),
+        _now(),
+        policy=settings.credentials,
+        hygiene=hygiene_results,
+        hygiene_skipped=skipped,
+        repos=settings.github_repos,
+        checks=checks,
+        stale_run_hours=args.stale_run_hours,
+    )
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print(posture.format_report(report), end="")
+    return posture.exit_code(report) if args.check else 0
+
+
 def cmd_agent_sessions(args: argparse.Namespace) -> int:
     """Advisory risk per agent session (ADR-0020). Nothing is blocked or approved by this."""
     store = _store(args)
@@ -1237,6 +1279,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--project", required=True, help="GCP project id")
     p.add_argument("--credential-id", required=True, help="key uid or 'apikey:<uid>'")
     p.add_argument("--actor", required=True)
+
+    pst = add(sub, "posture", cmd_posture, help="security posture: three indicators, no score")
+    pst.add_argument("--config", default="sentinel.toml")
+    pst.add_argument("--json", action="store_true")
+    pst.add_argument("--no-hygiene", action="store_true", help="skip the live hygiene scan")
+    pst.add_argument(
+        "--check",
+        action="store_true",
+        help="exit 2 if an indicator needs attention, 3 if nothing could be measured",
+    )
+    pst.add_argument(
+        "--stale-run-hours", type=int, default=posture.STALE_RUN_HOURS, help="older runs are stale"
+    )
 
     crd = add(
         sub,

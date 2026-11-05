@@ -289,7 +289,10 @@ below. Positioning: "evidence-driven", not "autonomous" (principle 1, rule 4).
    "high" from three unrelated keyword denials over three days, so the score stays advisory until a time bound can be
    set from data. **Agent session risk:** a deterministic per-session score from gateway decisions and one sequence rule (for example a
    sensitive read followed by an outbound attempt), spec and tests first. Behaviour baselines wait for weeks of real log data.
-4. **`sentinel posture`:** three separate indicators (security posture, threat exposure, Sentinel health), each listing
+4. **Built 2026-11-05 (ADR-0021; review "Approve with fixes", all fixed; 62 tests).** On the real store: threat
+   exposure and operational health are "attention" (14 live leaked credentials, an old open incident, the last run
+   115 hours ago, 4 collector errors); security posture is "review, partial" because the GitHub audit is older than
+   72 hours. **`sentinel posture`:** three separate indicators (security posture, threat exposure, Sentinel health), each listing
    the evidence behind it; no single unexplained score. Includes a short summary section for founders and CTOs.
 5. **`sentinel search`** (by fingerprint, asset, session, time range) and **`incident timeline`** (confirmed events,
    inferred links, missing evidence, alternative explanations, each labelled).
