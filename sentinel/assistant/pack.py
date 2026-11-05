@@ -86,7 +86,10 @@ _NUMBER_OR_FLAG_KEYS = frozenset(
 )
 SAFE_EVENT_ATTR_KEYS = _NUMBER_OR_FLAG_KEYS | frozenset(_SAFE_ATTR)
 # Blast-radius vocabulary written by Sentinel; any other value is disguised like free text.
-_KNOWN_PERMISSIONS = frozenset({"read", "write", "read-write", "readwrite", "admin", "none"})
+_KNOWN_PERMISSIONS = frozenset(
+    # can_call and runs_workflow: fixed words written by the graph producers (ADR-0018).
+    {"read", "write", "read-write", "readwrite", "admin", "none", "can_call", "runs_workflow"}
+)
 _KNOWN_ORIGINS = frozenset({"documented", "observed"})
 _KNOWN_IMPORTANCE = frozenset({"low", "medium", "high", "critical"})
 # Keys whose values identify something: disguised however short they are.

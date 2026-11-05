@@ -36,6 +36,7 @@ from sentinel.incidents.lifecycle import IncidentError
 from sentinel.incidents.response import DryRunAdapter
 from sentinel.inventory import agents as agent_inventory
 from sentinel.inventory import assets as inventory
+from sentinel.inventory import graph
 from sentinel.inventory.blast import link
 from sentinel.redaction import check_free_text
 from sentinel.reporting import markdown
@@ -137,6 +138,7 @@ def cmd_inventory_agents(args: argparse.Namespace) -> int:
     store, workspace, now = _store(args), Path(args.workspace), _now()
     agent = agent_inventory.register_agent(store, workspace, now)
     servers, skipped = agent_inventory.discover_mcp(store, workspace, now)
+    graph.refresh_agent_edges(store, agent, servers, now)
     print(f"agent: {agent}")
     print(f"MCP servers from {agent_inventory.MCP_CONFIG}: {len(servers)}")
     for asset_id in servers:
@@ -171,6 +173,57 @@ def cmd_inventory_check(args: argparse.Namespace) -> int:
 def cmd_inventory_link(args: argparse.Namespace) -> int:
     link(_store(args), args.cred_ref, args.asset, args.permission, args.actor, _now())
     print(f"linked {args.cred_ref} -> {args.asset} ({args.permission}), confirmed by {args.actor}")
+    return 0
+
+
+def cmd_inventory_edge(args: argparse.Namespace) -> int:
+    graph.add_documented_edge(
+        _store(args), args.source, args.target, args.permission, args.actor, _now()
+    )
+    print(
+        f"documented edge {args.source} -> {args.target} ({args.permission}), "
+        f"recorded by {args.actor}"
+    )
+    return 0
+
+
+# asset graph (ADR-0018) ------------------------------------------------------------
+def cmd_graph_refresh(args: argparse.Namespace) -> int:
+    results = graph.refresh_repositories(_store(args), _now())
+    if not results:
+        print("no repository assets with a local folder (run `inventory discover <folder>`)")
+    for asset_id, result in sorted(results.items()):
+        if isinstance(result, str):
+            print(f"{asset_id}: not refreshed ({result})")
+            continue
+        print(", ".join([f"{asset_id}: {len(result.workflows)} workflow(s)", *result.warnings()]))
+    print("Agent -> MCP edges are refreshed by `inventory agents` and `sentinel run`.")
+    return 0
+
+
+def cmd_graph_walk(args: argparse.Namespace) -> int:
+    walk = graph.reached_by if args.command_name == "reached-by" else graph.reach
+    result = walk(_store(args), args.asset, max_depth=args.depth)
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0
+    verb = "could be reached by" if result["direction"] == "reached_by" else "could reach"
+    print(
+        f"{result['start']} {verb} {len(result['nodes'])} asset(s) "
+        "(hypothesis: configured or recorded access, not observed use)"
+    )
+    for n in result["nodes"]:
+        print(
+            f"  {n['depth']}  {n['asset_id']:<40} {n['asset_type']:<14} "
+            f"{n['importance'] or '-':<8} "
+            f"{n['permission']:<16} {n['basis']:<10} {' -> '.join(n['path'])}"
+        )
+    if result["max_importance"]:
+        print(f"highest importance: {result['max_importance']}")
+    if result["dangling"]:
+        print(f"edges to assets not in the inventory: {', '.join(result['dangling'])}")
+    if result["truncated"]:
+        print(f"stopped at depth {args.depth}; more assets may be reachable (--depth)")
     return 0
 
 
@@ -1054,6 +1107,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("asset")
     p.add_argument("--permission", required=True)
     p.add_argument("--actor", required=True)
+    p = add(inv, "edge", cmd_inventory_edge, help="record a human-confirmed asset->asset edge")
+    p.add_argument("source", help="asset that has the access")
+    p.add_argument("target", help="asset it can reach")
+    p.add_argument("--permission", required=True)
+    p.add_argument("--actor", required=True)
     p = add(inv, "set", cmd_inventory_set, help="set owner, approval, importance or monitoring")
     p.add_argument("asset")
     p.add_argument("--actor", required=True)
@@ -1069,6 +1127,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--project", required=True, help="GCP project id")
     p.add_argument("--credential-id", required=True, help="key uid or 'apikey:<uid>'")
     p.add_argument("--actor", required=True)
+
+    grp = sub.add_parser("graph", help="asset graph (ADR-0018)").add_subparsers(
+        dest="sub", required=True
+    )
+    add(grp, "refresh", cmd_graph_refresh, help="derive repository -> workflow edges")
+    for name, text in (
+        ("reach", "what could this asset or linked credential reach (hypothesis)"),
+        ("reached-by", "which assets could reach this one (hypothesis)"),
+    ):
+        p = add(grp, name, cmd_graph_walk, help=text)
+        p.set_defaults(command_name=name)
+        p.add_argument("asset", help="asset id, or a credential ref for reach")
+        p.add_argument("--depth", type=int, default=graph.DEFAULT_DEPTH)
+        p.add_argument("--json", action="store_true")
 
     agt = sub.add_parser("agent", help="agent gateway controls (ADR-0016)").add_subparsers(
         dest="sub", required=True

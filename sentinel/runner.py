@@ -23,6 +23,7 @@ from sentinel import (
 from sentinel.config import ProbeHost, Settings, validate_extra_path
 from sentinel.events.schema import format_time
 from sentinel.incidents import lifecycle
+from sentinel.inventory import graph
 from sentinel.inventory.agents import approved_servers, discover_mcp, register_agent
 from sentinel.inventory.assets import asset_id_for, location_asset_id, register_location
 from sentinel.scanners import gitleaks
@@ -162,6 +163,19 @@ def run_once(
                 return stored_count
 
             guard(f"hygiene:{target.name}", hygiene_one)
+
+            graph_warnings: list[str] = []
+
+            def graph_one(target: Path = target, out: list[str] = graph_warnings) -> int:
+                # Repository -> workflow edges (ADR-0018); only for a registered repository.
+                asset = asset_id_for(target)
+                if any(a["asset_id"] == asset for a in store.assets()):
+                    out.extend(graph.discover_workflows(store, asset, target, now).warnings())
+                return 0
+
+            guard(f"graph:{target.name}", graph_one)
+            if graph_warnings and health[f"graph:{target.name}"] == "ok":
+                health[f"graph:{target.name}"] = "warn: " + "; ".join(graph_warnings)
 
     if scan:
         for raw in settings.extra_scan_paths:
@@ -322,8 +336,9 @@ def run_once(
             return stored_count
 
         def agent_inventory() -> int:
-            register_agent(store, workspace, now)
-            discover_mcp(store, workspace, now)
+            agent = register_agent(store, workspace, now)
+            servers, _skipped = discover_mcp(store, workspace, now)
+            graph.refresh_agent_edges(store, agent, servers, now)  # ADR-0018
             return 0
 
         # Events first, in their own guard: a broken .mcp.json (which an agent can write) must

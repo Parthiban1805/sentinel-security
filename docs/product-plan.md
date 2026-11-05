@@ -256,18 +256,62 @@ No outgoing-traffic allow-list yet (owner choice; needs its own ADR).
 kill-switch drill passed, and a sandbox now covers code the gateway cannot see. The limits in ADR-0016 and ADR-0017 remain
 (strict mode is advisory, the MCP allow-list trusts the server name, and so on).
 
+### v0.7c: Connected view  [M]  (scope confirmed by the owner 2026-11-05; started)
+**Item 1 built (ADR-0018, 2026-11-05):** `graph refresh`, `graph reach`, `graph reached-by` and `inventory edge`. The
+agent -> MCP and repository -> workflow producers also run in `sentinel run`. It ran on the real local repos and found
+7 workflows in 4 repositories.
+The security review returned Block: a slow regex on hostile workflow text. That and every "should fix" item are fixed
+and tested:
+- collision-proof workflow ids;
+- links and junctions out of the repo refused;
+- file count and size caps;
+- linked credentials in `reached-by`;
+- skips reported in run health;
+- `secrets: inherit` detected.
+
+The re-review returned "Approve with fixes": references hidden by an unclosed `${{` or a padded `inherit` line, and
+approval surviving a content change. Those are fixed too. 45 graph tests.
+**Not yet:** provider-metadata edges (ADR-0005 amendment) and a runner-level test of the `warn:` health.
+Added after the review of the feature proposal of 2026-11-05 (attack graph, posture, hunting, lifecycle, agent behaviour,
+drills). Only features that run on data Sentinel already collects are in scope; the rest is placed in v0.8, v0.9 and v1.x
+below. Positioning: "evidence-driven", not "autonomous" (principle 1, rule 4).
+1. **Asset graph** (ADR-0018). Edges Sentinel observes itself, each labelled `documented` or `observed` and tagged with
+   the producer that made it: agent -> MCP server (from `.mcp.json`), repository -> CI workflow -> secret *names* (from
+   workflow files, never values), later token -> repositories and key -> allowed APIs (provider metadata, needs an ADR-0005
+   amendment). `sentinel graph reach <asset>` (what could this reach: the "what if it were stolen" question) and
+   `sentinel graph reached-by <asset>` (what can reach this). Every path is a hypothesis of access until investigated.
+   This closes the v0.5 item "automatic blast-radius edges" and fixes the graph model before the v0.8 datastore design.
+2. **Credential lifecycle fields:** expiry, age, last used, owner, rotation due; `sentinel creds` report; a finding for
+   expired or unowned credentials. Rotation itself is v0.9.
+3. **Agent session risk:** a deterministic per-session score from gateway decisions and one sequence rule (for example a
+   sensitive read followed by an outbound attempt), spec and tests first. Behaviour baselines wait for weeks of real log data.
+4. **`sentinel posture`:** three separate indicators (security posture, threat exposure, Sentinel health), each listing
+   the evidence behind it; no single unexplained score. Includes a short summary section for founders and CTOs.
+5. **`sentinel search`** (by fingerprint, asset, session, time range) and **`incident timeline`** (confirmed events,
+   inferred links, missing evidence, alternative explanations, each labelled).
+6. **Scheduled detection drills:** fake canary leaks pushed through the live pipeline, measuring time to detect and to
+   open an incident (the section 7 metrics).
+- **Exit:** reach and reached-by on real local data with observed edges; posture report generated from a real run; one
+  drill run with measured time to detect; every new rule has tests; security review passed.
+
 ### v0.8: Endpoint agent and central service  [L]
 Detailed design happens here; direction is decided (plug-and-play on every employee system).
 - Installer and enrolment (see section 5), local-first agent that syncs, central service and datastore, authentication
   and roles, per-user approvals, immutable audit log, read-only console first, then approvals in the console.
 - Telemetry from developer machines (editor extensions S5, credential-file access, shell history and transcript scans)
   and CI runners; rule R3.
+- From the 2026-11-05 review: the console shows the asset graph and posture; fleet-wide agent kill switch; CI runtime
+  signals (workflow runs, artifact uploads, runner egress through an existing tool, not a new one); optionally
+  vulnerability intelligence through `osv-scanner` or `pip-audit` (CISA KEV and EPSS feeds are new destinations and need
+  an ADR; no reachability analysis).
 - **Exit:** two operators and two machines on shared state; approvals attributed to individuals; restore drill passed;
   enrolment under 10 minutes.
 
 ### v0.9: Real response  [M]
 - Adapters for specific actions with approval, dry run, rollback plan, audit entry and automatic verification: revoke a
   GitHub token or key, delete a Google API key, cap quota, suspend an agent credential, isolate a runner.
+- From the 2026-11-05 review: dependency-aware credential rotation (replace, validate, revoke, watch); workflow rollback to
+  the last approved version; health checks after rotation or rollback. Each has its own approval and rollback plan.
 - Emergency pre-approved policies only where a human explicitly agreed.
 - **Exit:** each adapter proven in a sandbox account; failed action leaves the incident open; drills pass.
 
@@ -277,6 +321,15 @@ documentation and onboarding, independent security review and penetration test o
 
 ### v1.x: To sell
 Multi-tenant isolation, single sign-on, billing and licensing, compliance evidence, public API, support tooling.
+From the 2026-11-05 review, each needing a data source or an ADR first:
+- Identity threat detection (logins, geography, privilege changes): needs an identity provider (Entra ID, Okta) or an
+  organisation audit log. Stale SSH keys and tokens are already covered (S14) and stay in v0.7c item 2.
+- Data loss detection: metadata and classification only, within the signed monitoring policy. Agent outbound traffic is
+  the open sandbox egress allow-list ADR.
+- Policy as code (schema-validated, versioned), integrations hub (each integration is a new destination with an ADR;
+  Slack or Teams alerts may come at v1.0 for on-call), compliance mapping (never claims certification), third-party and
+  connected-app risk, a wider deception network (for example a decoy MCP server).
+- Not planned: multi-agent AI investigation (more attack surface; v0.6 showed modest AI value).
 
 ## 5. Productization track (runs alongside the releases)
 

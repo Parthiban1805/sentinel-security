@@ -28,6 +28,7 @@
           "target_asset_id": { "type": "string" },
           "permission": { "type": "string" },
           "origin": { "type": "string", "enum": ["documented", "observed"] },
+          "source": { "type": "string", "description": "producer that made the edge (ADR-0018), e.g. human, mcp_config, workflow_files" },
           "last_seen": { "type": "string", "format": "date-time" }
         }
       }
