@@ -180,6 +180,8 @@ class GcpCollector(DeferredState):
             if not uid:
                 continue
             existing = {a["asset_id"]: a for a in store.assets()}.get(f"gcp-key-{uid}")
+            # Keep what a person recorded (lifecycle facts, ADR-0019); overwrite provider facts.
+            kept = dict((existing or {}).get("attributes") or {})
             store.upsert_asset(
                 {
                     "asset_id": f"gcp-key-{uid}",
@@ -192,6 +194,7 @@ class GcpCollector(DeferredState):
                     "approved": bool(existing and existing.get("approved")),
                     "last_seen": format_time(now),
                     "attributes": {
+                        **kept,
                         "project": project,
                         "uid": uid,
                         "created": key.get("createTime"),

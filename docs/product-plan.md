@@ -281,7 +281,8 @@ below. Positioning: "evidence-driven", not "autonomous" (principle 1, rule 4).
    amendment). `sentinel graph reach <asset>` (what could this reach: the "what if it were stolen" question) and
    `sentinel graph reached-by <asset>` (what can reach this). Every path is a hypothesis of access until investigated.
    This closes the v0.5 item "automatic blast-radius edges" and fixes the graph model before the v0.8 datastore design.
-2. **Credential lifecycle fields:** expiry, age, last used, owner, rotation due; `sentinel creds` report; a finding for
+2. **Built 2026-11-05 (ADR-0019; review "Approve with fixes", all fixed; 44 tests).** On real data it found a Google
+   key past rotation with no owner, and two SSH keys past rotation. **Credential lifecycle fields:** expiry, age, last used, owner, rotation due; `sentinel creds` report; a finding for
    expired or unowned credentials. Rotation itself is v0.9.
 3. **Agent session risk:** a deterministic per-session score from gateway decisions and one sequence rule (for example a
    sensitive read followed by an outbound attempt), spec and tests first. Behaviour baselines wait for weeks of real log data.

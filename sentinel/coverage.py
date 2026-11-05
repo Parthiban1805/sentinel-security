@@ -43,7 +43,7 @@ REAL_PRODUCERS = {
     "ssh_key_added": "github collector",
     "workflow_changed": "github collector",
     "release_published": "github collector",
-    "config_drift": "hygiene checks (sentinel hygiene)",
+    "config_drift": "hygiene checks, GitHub audit, credential lifecycle C1-C9 (sentinel run)",
     "dependency_added": "dependency snapshots (sentinel run)",
     "exposed_service": "exposure probes (sentinel probe)",
     "canary_triggered": "canary decoys (sentinel canary): copy, tamper, read; not provider use",

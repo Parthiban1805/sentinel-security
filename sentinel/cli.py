@@ -36,7 +36,7 @@ from sentinel.incidents.lifecycle import IncidentError
 from sentinel.incidents.response import DryRunAdapter
 from sentinel.inventory import agents as agent_inventory
 from sentinel.inventory import assets as inventory
-from sentinel.inventory import graph
+from sentinel.inventory import credentials, graph
 from sentinel.inventory.blast import link
 from sentinel.redaction import check_free_text
 from sentinel.reporting import markdown
@@ -184,6 +184,64 @@ def cmd_inventory_edge(args: argparse.Namespace) -> int:
         f"documented edge {args.source} -> {args.target} ({args.permission}), "
         f"recorded by {args.actor}"
     )
+    return 0
+
+
+# credential lifecycle (ADR-0019) -----------------------------------------------------
+def cmd_creds(args: argparse.Namespace) -> int:
+    store, now = _store(args), _now()
+    policy = config.load(Path(args.config)).credentials
+    views, dups = credentials.review(store, now, policy), credentials.duplicates(store)
+    problems = sum(len(v.problems) for v in views) + len(dups)
+    if args.record:
+        stored = sum(store.add_event(e) for e in credentials.to_events(views, dups, now))
+        print(f"recorded {stored} new config_drift event(s)", file=sys.stderr)
+    if args.json:
+        print(json.dumps(credentials.report_json(views, dups, now), indent=2, sort_keys=True))
+        return 1 if problems else 0
+    if not views and not dups:
+        print("no credential assets (api_key, github_token, service_account) or SSH keys known")
+        return 0
+    for v in views:
+        age = f"{v.age_days}d" if v.age_days is not None else "?"
+        expires = "n/a" if v.kind == "ssh_key" else (credentials.utc_date(v.expires) or "?")
+        owner = credentials.shown(v.owner) or "-"
+        print(
+            f"{v.ref:<36} {v.kind:<16} owner={owner:<12} age={age:<6} "
+            f"expires={expires:<10} rotate_due={v.rotate_due or '?':<10} {v.state}"
+        )
+        for p in v.problems:
+            print(f"    {p.check} {p.severity:<6} {credentials.CHECK_TEXT[p.check]}: {p.detail}")
+        if v.unknown:
+            print(f"    unknown: {', '.join(v.unknown)}")
+    for d in dups:
+        print(f"{d.ref:<36} C9 medium  live leak in {len(d.assets)} assets: {', '.join(d.assets)}")
+    unknown = sum(1 for v in views if v.unknown and not v.problems and not v.deleted)
+    print(
+        f"{problems} problem(s); {unknown} credential(s) with no problem found but facts unknown. "
+        "Record facts with `creds set <asset> --actor <you> --expires ...`. "
+        "Rotation and revocation are not automated (they need approval)."
+    )
+    return 1 if problems else 0
+
+
+def cmd_creds_set(args: argparse.Namespace) -> int:
+    # These values decide what is reported as fine (a future rotation date hides C3), so an
+    # agent must not set them for itself.
+    _require_human("recording credential lifecycle facts")
+    asset = credentials.set_lifecycle(
+        _store(args),
+        args.asset,
+        actor=args.actor,
+        now=_now(),
+        expires=args.expires,
+        last_used=args.last_used,
+        rotated_at=args.rotated_at,
+        rotate_every_days=args.rotate_every,
+    )
+    attrs = asset.get("attributes") or {}
+    shown = {k: attrs.get(k) for k in ("expires", "last_used", "rotated_at", "rotate_every_days")}
+    print(f"{asset['asset_id']}: " + ", ".join(f"{k}={v}" for k, v in shown.items() if v))
     return 0
 
 
@@ -1127,6 +1185,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--project", required=True, help="GCP project id")
     p.add_argument("--credential-id", required=True, help="key uid or 'apikey:<uid>'")
     p.add_argument("--actor", required=True)
+
+    crd = add(
+        sub,
+        "creds",
+        cmd_creds,
+        help="credential lifecycle report (ADR-0019); exit 1 = problems found or an error",
+    )
+    crd.add_argument("--config", default="sentinel.toml")
+    crd.add_argument("--json", action="store_true")
+    crd.add_argument("--record", action="store_true", help="store problems as config_drift events")
+    crd_sub = crd.add_subparsers(dest="sub", required=False)
+    p = add(crd_sub, "set", cmd_creds_set, help="record expiry, last use or rotation facts")
+    p.add_argument("asset")
+    p.add_argument("--actor", required=True)
+    p.add_argument("--expires", help="YYYY-MM-DD")
+    p.add_argument("--last-used", help="YYYY-MM-DD")
+    p.add_argument("--rotated-at", help="YYYY-MM-DD")
+    p.add_argument("--rotate-every", type=int, help="days")
 
     grp = sub.add_parser("graph", help="asset graph (ADR-0018)").add_subparsers(
         dest="sub", required=True

@@ -136,6 +136,33 @@ def _sandbox(data: dict[str, Any]) -> SandboxSettings:
     return s
 
 
+MAX_ROTATE_DAYS = 3650
+
+
+@dataclass(frozen=True)
+class CredentialPolicy:
+    """[credentials] in sentinel.toml (ADR-0019)."""
+
+    rotate_days: int = 90
+    expiry_warn_days: int = 14
+    unused_days: int = 90
+
+    def __post_init__(self) -> None:
+        for name in ("rotate_days", "expiry_warn_days", "unused_days"):
+            value = getattr(self, name)
+            if not 1 <= value <= MAX_ROTATE_DAYS:
+                raise ValueError(f"[credentials] {name} must be between 1 and {MAX_ROTATE_DAYS}")
+
+
+def _credentials(data: dict[str, Any]) -> CredentialPolicy:
+    c = data.get("credentials", {})
+    return CredentialPolicy(
+        rotate_days=int(c.get("rotate_days", 90)),
+        expiry_warn_days=int(c.get("expiry_warn_days", 14)),
+        unused_days=int(c.get("unused_days", 90)),
+    )
+
+
 @dataclass(frozen=True)
 class Settings:
     scan_paths: tuple[str, ...] = ()
@@ -155,6 +182,7 @@ class Settings:
     github_audit_interval_hours: int = 24
     assistant: AssistantSettings = field(default_factory=AssistantSettings)
     sandbox: SandboxSettings = field(default_factory=SandboxSettings)
+    credentials: CredentialPolicy = field(default_factory=CredentialPolicy)
     extra: dict[str, object] = field(default_factory=dict)
 
 
@@ -205,4 +233,5 @@ def load(path: Path) -> Settings:
         github_audit_interval_hours=int(gh.get("audit_interval_hours", 24)),
         assistant=_assistant(data),
         sandbox=_sandbox(data),
+        credentials=_credentials(data),
     )

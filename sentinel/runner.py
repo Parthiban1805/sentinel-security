@@ -23,7 +23,7 @@ from sentinel import (
 from sentinel.config import ProbeHost, Settings, validate_extra_path
 from sentinel.events.schema import format_time
 from sentinel.incidents import lifecycle
-from sentinel.inventory import graph
+from sentinel.inventory import credentials, graph
 from sentinel.inventory.agents import approved_servers, discover_mcp, register_agent
 from sentinel.inventory.assets import asset_id_for, location_asset_id, register_location
 from sentinel.scanners import gitleaks
@@ -353,6 +353,14 @@ def run_once(
 
     if probe_fetch is not None or settings.probe_hosts:
         guard("reverify:paths", lambda: reverify_open_paths(store, now, probe_fetch))
+
+    def check_credentials() -> int:
+        # Credential lifecycle checks C1-C9 (ADR-0019), after the collectors so this run's key
+        # data is used. config_drift events only: no rule turns them into incidents.
+        views = credentials.review(store, now, settings.credentials)
+        return add(credentials.to_events(views, credentials.duplicates(store), now))
+
+    guard("credentials", check_credentials)
 
     created = lifecycle.open_incidents(store, now)
     alerted = []
