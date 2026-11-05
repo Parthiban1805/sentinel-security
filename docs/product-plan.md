@@ -244,11 +244,17 @@ listed in ADR-0016 remain until 7b.
 - After an independent review blocked the first version, sandboxed one-liners still ask like any inline code; an
   exemption could be borrowed by a shell function.
 
-No outgoing-traffic allow-list yet (owner choice; needs its own ADR). **Pending, on the owner's side:**
-- ~~pull and pin the image, then confirm the live test~~: done 2026-11-05. The live test passed (no network, no `.env`, no
-  Docker socket, not root), and a real run worked end to end,
-- re-apply the gateway patch,
-- the Docker Desktop licence (on hold; see ADR-0017).
+No outgoing-traffic allow-list yet (owner choice; needs its own ADR).
+
+**v0.7b done (2026-11-05).**
+- Image pulled and pinned. The live test passed (no network, no `.env`, no Docker socket, not root), and a real run worked
+  end to end.
+- The owner re-applied the gateway patch, 124 scenario tests pass on the live hooks, and the hooks are pinned.
+- **Open:** the Docker Desktop licence (on hold; see ADR-0017), and the egress allow-list, which needs its own ADR.
+
+**v0.7 is complete.** The exit gate is met: every in-scope agent action has a decision, the two bypass tests are green, the
+kill-switch drill passed, and a sandbox now covers code the gateway cannot see. The limits in ADR-0016 and ADR-0017 remain
+(strict mode is advisory, the MCP allow-list trusts the server name, and so on).
 
 ### v0.8: Endpoint agent and central service  [L]
 Detailed design happens here; direction is decided (plug-and-play on every employee system).

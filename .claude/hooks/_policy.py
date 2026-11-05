@@ -25,6 +25,7 @@ Decision = collections.namedtuple("Decision", "decision rule cls reason target")
 
 KILL_SWITCH_NAME = "agent-kill-switch"
 MCP_ALLOWLIST_NAME = "mcp-allowlist.json"
+SANDBOX_STRICT_NAME = "sandbox-strict"  # ADR-0017: present = code outside the sandbox asks
 READ_ONLY_TOOLS = ("Read", "Grep", "Glob", "LS")
 WRITE_TOOLS = ("Edit", "MultiEdit", "Write", "NotebookEdit")
 FILE_TOOLS = READ_ONLY_TOOLS + WRITE_TOOLS
@@ -35,7 +36,10 @@ _SEG_END = r"[^|;&\n]*"
 # Sentinel state and the user-level Claude config (may hold MCP tokens): no reads, no writes.
 _STATE = r"(\.sentinel\b|\.sen[\w.]*[*?\[]|\.claude\.json\b)"
 # The gateway itself and agent configuration: reads are fine, writes are not.
-_GUARD = r"(\.claude[\\/]+(hooks|settings|backup)|\.cla[\w.]*[*?\[]|\.mcp\.json\b)"
+_GUARD = (
+    r"(\.claude[\\/]+(hooks|settings|backup)|\.cla[\w.]*[*?\[]|\.mcp\.json\b|\bsentinel\.toml\b"
+    r"|\.(bashrc|bash_profile|bash_login|profile|zshrc)\b|\bprofile\.ps1\b)"
+)
 _READ_VERB_NAMES = (
     "cat|type|more|less|head|tail|get-content|gc|grep|rg|sed|awk|sort|uniq|findstr"
     "|select-string|sls|strings|xxd|base64|bat|nl|od"
@@ -91,8 +95,19 @@ BASH_RULES = [
     ("BG-20", "guard_write",
      _WRITE_VERBS + _SEG_END + _GUARD + r"|" + _GUARD + _SEG_END + _WRITE_VERBS,
      "deny", "the agent gateway, its settings and MCP config are changed by a person, not an agent"),
-    ("BG-22", "clean_ignored", r"\bgit\s+clean\b" + _SEG_END + r"\s-[a-zA-Z]*[xX]", "deny",
-     "git clean -x/-X deletes ignored files, including Sentinel's state"),
+    ("BG-22", "clean_ignored",
+     r"\bgit\s+clean\b" + _SEG_END + r"\s-[a-zA-Z]*[xX]"
+     r"|\bgit\s+stash\b" + _SEG_END + r"(\s-[a-zA-Z]*a\b|\s--all\b)", "deny",
+     "git clean -x / git stash --all remove ignored files, including Sentinel's state"),
+    # Docker can mount the host or run privileged; the sandbox is the reviewed way to use it.
+    ("BG-24", "container_host_access",
+     r"\b(docker|podman|nerdctl)(\.exe)?\b" + _SEG_END
+     + r"(--privileged|\s-v\s|\s-v[=:/\\A-Za-z]|--volume|--mount|docker\.sock|--pid[= ]host"
+     r"|--net(work)?[= ]host|--cap-add|--security-opt|--device|--userns[= ]host)"
+     r"|\bdocker\s+context\s+(use|create|update)\b|\b(DOCKER_HOST|DOCKER_CONTEXT)\s*=", "deny",
+     "this Docker command can reach the host; use sentinel sandbox run instead"),
+    ("BG-25", "container_cli", r"(^|[;&|(]\s*)(docker|podman|nerdctl)(\.exe)?\b", "ask",
+     "runs a container command; the sandbox is the reviewed way to run code in Docker"),
     ("BG-17", "gateway_control", r"\bkill-switch\s+off\b", "deny",
      "only a person at a terminal may turn the agent kill switch off"),
     ("BG-18", "package_run",
@@ -100,7 +115,7 @@ BASH_RULES = [
      r"|\buv\s+(run|tool\s+run)\b" + _SEG_END + r"--with\b",
      "ask", "downloads and runs a package"),
     ("BG-19", "link_create",
-     r"\bmklink\b|\bln\s+-[a-zA-Z]*s|\bjunction(\.exe)?\b"
+     r"\bmklink\b|(^|[;&|]\s*)ln\s|\bjunction(\.exe)?\b"
      r"|new-item\b" + _SEG_END + r"-itemtype\s+[\"']?(symboliclink|junction|hardlink)",
      "ask", "creates a link, which can make a protected file look like an ordinary one"),
     ("BG-21", "fake_terminal", r"\bwinpty\b|\bscript\s+-[a-z]*c", "ask",
@@ -287,14 +302,57 @@ def _powershell(args, piped):
     return _ASK if piped else None
 
 
-def _inline(command):
-    """The strongest inline-code finding in a command: deny (encoded) > ask > None."""
+def _segment_tokens(command):
+    """(tokens, piped) per simple command, with line continuations and glued empty quotes removed."""
     command = re.sub(r"(\\|\^|`)\r?\n", " ", command)  # line continuations: bash, cmd, PowerShell
-    found = None
     for segment, piped in _segments(command):
         # A shell glues empty quotes to the neighbouring word: python ""-c, py""thon -c.
         segment = re.sub(r"(?<=\S)(\"\"|'')|(\"\"|'')(?=\S)", "", segment)
-        tokens = _tokens(segment)
+        yield _tokens(segment), piped
+
+
+def _launched(tokens):
+    """Index of the program a segment runs, skipping a leading `uv run` WITHOUT options (options
+    such as --project could pick another project's programs)."""
+    if len(tokens) >= 2 and _program(tokens[0]) == "uv" and _bare(tokens[1]).lower() == "run":
+        return 2
+    return 0
+
+
+def _sandboxed(tokens):
+    """`sentinel sandbox run ...` or `uv run sentinel sandbox run ...` (ADR-0017), used only by
+    strict mode. Only the bare command name counts: a path like ./sentinel could be a program the
+    agent wrote. Not a security boundary: a shell function or alias named sentinel in the agent's
+    shell would also match (ADR-0017, security review)."""
+    j = _launched(tokens)
+    if len(tokens) < j + 3 or _bare(tokens[j]).lower() not in ("sentinel", "sentinel.exe"):
+        return False
+    return [_bare(t).lower() for t in tokens[j + 1 : j + 3]] == ["sandbox", "run"]
+
+
+_CODE_RUNNERS = (
+    _PY, _NODE, _RUBY_PERL, _PHP, _PS,
+    re.compile(r"pytest|bash|sh|zsh|dash|cmd|make|npm|pnpm|yarn|go|java|cscript|wscript|cargo"),
+)  # fmt: skip
+_SCRIPT = re.compile(r".+\.(py|pyw|js|mjs|cjs|ts|sh|bash|bat|cmd|ps1|rb|pl|php)", re.IGNORECASE)
+
+
+def _runs_code(tokens):
+    """Strict mode's test for 'this runs code'. Advisory (ADR-0017): a list is never complete."""
+    if any(any(p.fullmatch(_program(t)) for p in _CODE_RUNNERS) for t in tokens):
+        return True
+    j = _launched(tokens)
+    if j == 2 and len(tokens) > 2:
+        return True  # uv run <anything> runs a program from the project environment
+    return bool(tokens) and bool(_SCRIPT.fullmatch(_bare(tokens[0])))
+
+
+def _inline(command):
+    """The strongest inline-code finding in a command: deny (encoded) > ask > None.
+    No exemption for the sandbox: a shell-level name check cannot prove the sandbox really runs
+    (security review 2026-11-03), so sandboxed one-liners ask like any other inline code."""
+    found = None
+    for tokens, piped in _segment_tokens(command):
         for i, token in enumerate(tokens):
             name = _program(token)
             args = [_bare(t) for t in tokens[i + 1 :]]
@@ -315,7 +373,25 @@ def _inline(command):
     return found
 
 
-def _command(command):
+def _strict(command, home):
+    """Sandbox strict mode (ADR-0017): code run OUTSIDE the sandbox needs the user's confirmation."""
+    if not home or not _present(os.path.join(home, SANDBOX_STRICT_NAME)):
+        return None
+    segments = list(_segment_tokens(command))
+    if len(segments) == 1 and _sandboxed(segments[0][0]):
+        return None  # exactly one command, and it is the sandbox
+    for tokens, _piped in segments:
+        if _runs_code(tokens):
+            return Decision(
+                "ask", "BG-23", "unsandboxed_code",
+                "runs code outside the sandbox while sandbox strict mode is on "
+                "(use: sentinel sandbox run -- <command>)",
+                command,
+            )  # fmt: skip
+    return None
+
+
+def _command(command, home=""):
     deny, ask = None, None
     for rule_id, cls, pattern, decision, reason in BASH_RULES:
         if re.search(pattern, command, flags=_FLAGS):
@@ -331,6 +407,9 @@ def _command(command):
         return inline._replace(target=command)
     if ask:
         return ask
+    strict = _strict(command, home)
+    if strict is not None:
+        return strict
     return Decision("allow", "GW-00", "command", "", command)
 
 
@@ -358,6 +437,21 @@ FILE_RULES = [
     ("PF-18", "mcp_config", r"(^|/)\.mcp\.json$", "write"),
     ("PF-19", "user_agent_config", r"(^|/)\.claude\.json$", "all"),
     ("PF-20", "python_startup", r"\.pth$|(^|/)(site|user)customize\.py$", "write"),
+    (
+        "PF-22",
+        "token_file",
+        r"(^|/)\.(npmrc|pypirc|vault-token|htpasswd|envrc)$|\.(ppk|p8|tfstate|tfvars)$"
+        r"|client_secret[^/]*\.json$|(^|/)google-services\.json$|(^|/)\.gnupg(/|$)"
+        r"|(^|/)kubeconfig[^/]*$",
+        "all",
+    ),
+    (
+        "PF-23",
+        "agent_config",
+        r"(^|/)sentinel\.toml$|(^|/)\.(bashrc|bash_profile|bash_login|profile|zshrc)$"
+        r"|(^|/)(microsoft\.powershell_)?profile\.ps1$",
+        "write",
+    ),
 ]
 
 
@@ -492,7 +586,7 @@ def decide(data, home):
         command = tool_input.get("command")
         if tool == "Bash" or isinstance(command, str):  # Bash, PowerShell and any other shell tool
             text = command if isinstance(command, str) else ""
-            return _command(text) if text else Decision("allow", "GW-00", "command", "", "")
+            return _command(text, home) if text else Decision("allow", "GW-00", "command", "", "")
         return Decision("allow", "GW-00", "tool_call", "", "")
     except Exception:  # noqa: BLE001 - fail closed
         return Decision(
