@@ -144,6 +144,14 @@ SCENARIOS: tuple[Scenario, ...] = (
         "agent hook decision log; only blocked actions and MCP calls are visible",
     ),
     Scenario(
+        "S11",
+        "Agent session tries a sensitive read, then an outbound call",
+        "R12",
+        lambda: scenarios.sensitive_then_outbound("5e55105e55105e56", "agent-demo", NOW),
+        ("agentlog",),
+        "agent hook decision log; only refused or questioned attempts are visible, not data sent",
+    ),
+    Scenario(
         "S12",
         "Agent uses an MCP server that is not approved",
         "R5c",

@@ -11,6 +11,7 @@ from typing import Any
 from sentinel import findings
 from sentinel.correlation.engine import context_from_store, correlate
 from sentinel.correlation.model import Match
+from sentinel.correlation.session_risk import attrs_of, session_risk
 from sentinel.events.schema import format_time
 from sentinel.incidents import response, scoring
 from sentinel.inventory.blast import blast_radius
@@ -39,7 +40,36 @@ _UNKNOWNS: dict[str, tuple[str, ...]] = {
         "Which process touched the decoy (the gateway only sees tool calls, not what they start).",
         "Whether the agent session started a script or program in that window.",
     ),
+    "R12": (
+        "Whether any data was sent anywhere: the attempts were refused or questioned, and the "
+        "calls the gateway allowed are mostly not logged.",
+        "What the session read before and after (untrusted web pages, files, tool output).",
+        "Whether a person typed these commands and the keyword guard simply matched them.",
+    ),
 }
+
+# Rules about one agent session: the incident record also carries the advisory session score.
+_SESSION_RULES = frozenset({"R5b", "R12"})
+
+
+def _session_risk(store: Store, match: Match) -> dict[str, Any] | None:
+    """Advisory score over the WHOLE session of the matched events (ADR-0020), or None."""
+    if match.rule_id not in _SESSION_RULES:
+        return None
+    wanted = set(match.event_ids)
+    events = [e for e in store.events() if e["source"] == "agent_hook"]
+    first = next((e for e in events if e["event_id"] in wanted), None)
+    if first is None:
+        return None
+    session = str(attrs_of(first).get("session", ""))
+    same = [
+        e
+        for e in events
+        if str(attrs_of(e).get("session", "")) == session
+        and e["is_test"] == match.is_test
+        and (session or e["asset_id"] == first["asset_id"])  # sessionless: per agent asset
+    ]
+    return session_risk(same, context_from_store(store))
 
 
 class IncidentError(ValueError):
@@ -131,6 +161,7 @@ def _build(
         "timeline": _timeline(store, match.event_ids),
         "blast_radius": blast,
         "response_plan": response.plan_for(match.rule_id),
+        **({"session_risk": sr} if (sr := _session_risk(store, match)) else {}),
     }
 
 

@@ -185,6 +185,28 @@ _PLANS: dict[str, tuple[_Step, ...]] = {
             True,
         ),
     ),
+    "R12": (
+        (
+            "review_session_inputs",
+            "Review what the session read (web pages, files, tool and MCP output) for injected "
+            "instructions, and what it tried to read and send",
+            "investigate_first",
+            True,
+        ),
+        (
+            "end_session_revoke",
+            "End the agent session and revoke any credential it could have read",
+            "approval_required",
+            True,
+        ),
+        (
+            "verify_agent_hooks",
+            "Installed hooks match the reviewed patch and the decision log chain is intact "
+            "(system-verified)",
+            "investigate_first",
+            True,
+        ),
+    ),
     "R9": (
         (
             "review_agent_session",

@@ -284,7 +284,10 @@ below. Positioning: "evidence-driven", not "autonomous" (principle 1, rule 4).
 2. **Built 2026-11-05 (ADR-0019; review "Approve with fixes", all fixed; 44 tests).** On real data it found a Google
    key past rotation with no owner, and two SSH keys past rotation. **Credential lifecycle fields:** expiry, age, last used, owner, rotation due; `sentinel creds` report; a finding for
    expired or unowned credentials. Rotation itself is v0.9.
-3. **Agent session risk:** a deterministic per-session score from gateway decisions and one sequence rule (for example a
+3. **Built 2026-11-05 (ADR-0020, spec R12; review "Approve with fixes", all fixed; 44 tests).** `sentinel agent sessions` (advisory score),
+   rule R12, incident record carries the session score, new coverage scenario. On the real log one session scores
+   "high" from three unrelated keyword denials over three days, so the score stays advisory until a time bound can be
+   set from data. **Agent session risk:** a deterministic per-session score from gateway decisions and one sequence rule (for example a
    sensitive read followed by an outbound attempt), spec and tests first. Behaviour baselines wait for weeks of real log data.
 4. **`sentinel posture`:** three separate indicators (security posture, threat exposure, Sentinel health), each listing
    the evidence behind it; no single unexplained score. Includes a short summary section for founders and CTOs.

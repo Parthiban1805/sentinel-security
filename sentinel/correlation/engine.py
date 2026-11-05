@@ -14,6 +14,7 @@ from sentinel.correlation.rules import (
     r9_ungated_sensitive_access,
     r10_exposed_sensitive_path,
     r11_use_after_revocation,
+    r12_sensitive_then_outbound,
 )
 from sentinel.inventory.agents import approved_servers
 from sentinel.store.db import Store
@@ -30,6 +31,7 @@ RULES = (
     r7_canary,
     r8_workflow_change_before_release,
     r9_ungated_sensitive_access,
+    r12_sensitive_then_outbound,
 )
 
 

@@ -30,6 +30,8 @@ from sentinel import (
 from sentinel.assistant import budget as ai_budget
 from sentinel.assistant import client as ai_client
 from sentinel.assistant import explain as ai_explain
+from sentinel.correlation.engine import context_from_store
+from sentinel.correlation.session_risk import attrs_of, safe_text, session_risk
 from sentinel.events.schema import SchemaError, format_time
 from sentinel.incidents import lifecycle, summary, watch
 from sentinel.incidents.lifecycle import IncidentError
@@ -687,6 +689,56 @@ def cmd_agent_kill_switch(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_agent_sessions(args: argparse.Namespace) -> int:
+    """Advisory risk per agent session (ADR-0020). Nothing is blocked or approved by this."""
+    store = _store(args)
+    ctx = context_from_store(store)
+    groups: dict[tuple[str, bool], list[dict[str, Any]]] = {}
+    for e in store.events():
+        if e["source"] != "agent_hook" or (e["is_test"] and not args.include_test):
+            continue
+        session = safe_text(attrs_of(e).get("session", ""), 64) or f"unknown-{e['asset_id']}"
+        groups.setdefault((session, bool(e["is_test"])), []).append(e)
+    rows: list[dict[str, Any]] = []
+    for (session, is_test), events in groups.items():
+        risk = session_risk(events, ctx)
+        times = sorted(e["time"] for e in events)
+        rows.append(
+            {
+                "session": session,
+                "test": is_test,
+                "events": len(events),
+                "first": times[0],
+                "last": times[-1],
+                **risk,
+            }
+        )
+    rows.sort(key=lambda r: (-int(r["points"]), str(r["session"]), bool(r["test"])))
+    note = (
+        "Advisory only: a score never blocks or approves anything. Points have no time limit, so "
+        "a long session drifts upward on harmless keyword blocks. Allowed calls are mostly not "
+        "logged, so a low level does not mean nothing happened."
+    )
+    if args.json:
+        print(
+            json.dumps({"advisory": True, "note": note, "sessions": rows}, indent=2, sort_keys=True)
+        )
+        return 0
+    if not rows:
+        print("no agent sessions in the store (test sessions need --include-test)")
+        return 0
+    print(note)
+    for r in rows:
+        label = " [test]" if r["test"] else ""
+        print(
+            f"{r['session']:<28} {r['level']:<9} {r['points']:>3} pts  {r['events']} event(s)  "
+            f"{r['first']} .. {r['last']}{label}"
+        )
+        for why in r["reasons"] or ["no refused or questioned attempts logged"]:
+            print(f"    {why}")
+    return 0
+
+
 def cmd_agent_mcp_allowlist(args: argparse.Namespace) -> int:
     home = _home(args)
     path = home / agentgate.MCP_ALLOWLIST_NAME
@@ -1224,6 +1276,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = add(agt, "kill-switch", cmd_agent_kill_switch, help="refuse every agent tool but reading")
     p.add_argument("state", choices=["on", "off", "status"])
     p.add_argument("--actor", default="", help="who turned it on (recorded)")
+    p = add(agt, "sessions", cmd_agent_sessions, help="advisory risk per agent session (ADR-0020)")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--include-test", action="store_true", help="include simulated sessions")
     p = add(agt, "mcp-allowlist", cmd_agent_mcp_allowlist, help="MCP allow-list status or off")
     p.add_argument("state", choices=["status", "off"])
 

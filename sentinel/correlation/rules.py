@@ -1,9 +1,19 @@
-"""Rules R1, R4, R6, R7 (specs: docs/spec/correlation-rules.md). Pure functions over event lists."""
+"""Correlation rules R1-R12 (specs: docs/spec/correlation-rules.md); pure functions over events."""
 
 from datetime import datetime, timedelta
 from typing import Any
 
 from sentinel.correlation.model import Context, Match
+from sentinel.correlation.session_risk import (
+    approved_prefix as _approved_prefix,
+)
+from sentinel.correlation.session_risk import (
+    attempt_kind,
+    attrs_of,
+    find_sequence,
+    ordered,
+    safe_text,
+)
 
 Event = dict[str, Any]
 
@@ -389,7 +399,8 @@ def r5b_repeated_agent_denials(events: list[Event], ctx: Context) -> list[Match]
     for e in events:
         if e["event_type"] != "agent_tool_denied":
             continue
-        session = str((e.get("attributes") or {}).get("session", "")) or f"unknown@{e['asset_id']}"
+        # No "@" in the base: closed episodes are looked up by the key text before its first "@".
+        session = str((e.get("attributes") or {}).get("session", "")) or f"unknown-{e['asset_id']}"
         groups.setdefault(_group_key(f"R5b:{session}", e["is_test"]), []).append(e)
     matches: list[Match] = []
     for base, group in sorted(groups.items()):
@@ -437,13 +448,6 @@ def r5b_repeated_agent_denials(events: list[Event], ctx: Context) -> list[Match]
     return matches
 
 
-def _approved_prefix(tool: str, approved: frozenset[str]) -> bool:
-    """Exact server name: everything before the LAST '__', parsed the same way as the gateway
-    (security review 2026-11-03: a server named 'github__x' is not the approved 'github')."""
-    rest = tool[len("mcp__") :]
-    return "__" in rest and rest.rsplit("__", 1)[0] in approved
-
-
 def r5c_unapproved_mcp_server(events: list[Event], ctx: Context) -> list[Match]:
     """An MCP tool call to a server nobody approved (S12). Active only in allowlist mode, i.e.
     once at least one MCP server was approved; one incident per server episode."""
@@ -488,6 +492,65 @@ def r5c_unapproved_mcp_server(events: list[Event], ctx: Context) -> list[Match]:
                 first_time=calls[0]["time"],
                 last_time=calls[-1]["time"],
                 is_test=calls[0]["is_test"],
+            )
+        )
+    return matches
+
+
+def r12_sensitive_then_outbound(events: list[Event], ctx: Context) -> list[Match]:
+    """R12 (S11, ADR-0020): in one agent session, a sensitive access attempt (denied or asked) is
+    followed, within r12_window, by an outbound attempt (denied, asked, or a call to an MCP server
+    nobody approved). One incident per session episode. Both attempts were refused or confirmed by
+    the gateway, so this rule does not show that any data left the machine."""
+    approved, window = ctx.approved_mcp_servers, ctx.config.r12_window
+    groups: dict[str, list[Event]] = {}
+    for e in events:
+        if e.get("source") != "agent_hook" or attempt_kind(e, approved) is None:
+            continue
+        # No "@" in the base: closed episodes are looked up by the key text before its first "@".
+        session = safe_text(attrs_of(e).get("session", ""), 64) or f"unknown-{e.get('asset_id')}"
+        groups.setdefault(_group_key(f"R12:{session}", bool(e.get("is_test"))), []).append(e)
+    matches: list[Match] = []
+    for base, group in sorted(groups.items()):
+        # `ordered` drops events with an unreadable time first, so nothing below can raise on one.
+        attempts = _episode(base, ordered(group), ctx)
+        pair = find_sequence(attempts, approved, window)
+        if pair is None:
+            continue
+        first, second = pair
+        involved = [
+            e for e in attempts if _ts(e) >= _ts(first) and attempt_kind(e, approved) != "other"
+        ]
+        session = safe_text(attrs_of(first).get("session", ""), 64) or "unknown"
+        s_class = safe_text(attrs_of(first).get("target_class", "?"))
+        o_class = safe_text(attrs_of(second).get("target_class", "?"))
+        if attrs_of(second).get("mcp_server") and attempt_kind(second, approved) == "outbound":
+            o_class = f"unapproved MCP server {safe_text(attrs_of(second)['mcp_server'])}"
+        minutes = (_ts(second) - _ts(first)).total_seconds() / 60
+        matches.append(
+            Match(
+                rule_id="R12",
+                key=f"{base}@{first['time']}",
+                title="Sensitive access attempt, then an outbound attempt, in one agent session",
+                severity_floor="high",
+                confidence="low",
+                facts=(
+                    f"In agent session {session} the gateway refused or questioned an access "
+                    f"attempt of class '{s_class}' at {first['time']}, then an outbound attempt "
+                    f"({o_class}) {minutes:.0f} minutes later.",
+                    f"{len(involved)} sensitive or outbound attempts in this episode.",
+                ),
+                hypotheses=(
+                    "The agent may have been steered (prompt injection) to collect sensitive data "
+                    "and send it out. Equally plausible until the session is reviewed: a person "
+                    "ran legitimate commands that the keyword guard matched. This rule does not "
+                    "show that any data left the machine.",
+                ),
+                event_ids=tuple(e["event_id"] for e in involved),
+                asset_id=first["asset_id"],
+                first_time=first["time"],
+                last_time=involved[-1]["time"],
+                is_test=first["is_test"],
             )
         )
     return matches

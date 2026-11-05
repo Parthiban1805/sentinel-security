@@ -14,6 +14,8 @@ class Config:
     # R9: gateway decisions this long BEFORE a decoy event count as "an agent session was active".
     # Covers the 15-minute canary check interval (the event time is the check time). [confirm]
     r9_lookback: timedelta = timedelta(minutes=30)
+    # R12: a sensitive access attempt, then an outbound attempt, in one agent session. [confirm]
+    r12_window: timedelta = timedelta(minutes=15)
 
 
 @dataclass(frozen=True)

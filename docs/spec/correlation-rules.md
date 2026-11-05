@@ -161,6 +161,44 @@ id, the tool name, a stable rule id, a class and a keyed target fingerprint.
 All rules are pure functions, deterministic and order independent. Events with `is_test: true` produce test
 incidents that are counted in metrics only.
 
+## Specified in v0.7c (agent session risk; tests in `tests/sentinel/test_r12.py`, ADR-0020)
+
+### Session risk score (a function, not a rule)
+- **Inputs:** the `agent_tool_denied` / `agent_tool_allowed` events of ONE session (`attributes.session`), with
+  `decision`, `rule`, `target_class` and `mcp_server`.
+- **Output:** `{level, points, reasons}`. Fixed weights, no learned values, deterministic. Levels: `low` (0-2),
+  `elevated` (3-5), `high` (6 and above). Every point has a reason line, so the score can always be explained.
+- **Weights:** a denial of a sensitive-read class (credential, env, history, key or cloud-credential files)
+  = 2; a denial of an outbound class (network tool, remote access, pipe to shell, cloud CLI) = 2; any other
+  denial = 1; a call to an unapproved MCP server (allowlist mode only) = 2; an `ask` decision = 1; the R12
+  sequence below = 3. A class not listed counts as "other".
+- **Use:** shown in the incident record and `sentinel agent sessions`. It never blocks anything and never
+  authorizes anything (principle 1). Severity, confidence and urgency stay separate fields.
+
+### R12: a sensitive read attempt, then an outbound attempt, in one agent session (S11)
+- **Inputs:** `agent_tool_denied` and `agent_tool_allowed` from `agent_hook`. **Join key:** `attributes.session`.
+- **Window:** `r12_window` = 15 minutes `[confirm]` from the sensitive attempt to the outbound one.
+- **Sensitive-read classes:** `credential_read`, `env_dump`, `shell_history`, `env_file`, `key_file`, `ssh_key`,
+  `ssh_dir`, `cloud_credentials`, `credential_store`, `secrets_dir`, `credential_json`, `state_dir`,
+  `state_dir_access`.
+- **Outbound classes:** `network_tool`, `remote_access`, `pipe_to_shell`, `cloud_cli`, or an `agent_tool_allowed`
+  MCP call to a server that is not approved (allowlist mode).
+- **Condition:** a sensitive attempt (denied, or asked) followed by an outbound attempt in the same session within
+  the window. Pseudocode: `for each sensitive s: if any outbound o with 0 < t(o) - t(s) <= window: match`.
+- **Output:** ONE incident per session episode (dedup key `R12:<session>@<time>`). Severity floor high,
+  confidence low. **Facts:** which classes were attempted and the order. **Hypotheses (not proven):** the agent may
+  have been steered to collect and send out sensitive data; it may equally be a person running legitimate commands
+  that the keyword guard blocks. Both attempts were refused or confirmed by the gateway, so no data leaving is
+  shown by this rule.
+- **Not a match:** outbound before sensitive; outside the window; different sessions; an allowed outbound call that
+  is not an MCP call (the gateway does not log plain allowed calls); test events are grouped apart.
+- **Response plan:** review the session's untrusted inputs; end the session and rotate anything it could read
+  (approval); verify the hooks are unchanged and the log chain is intact.
+- **Known gaps:** only gateway decisions are visible; there is no baseline of normal behaviour (the real log holds
+  too few entries, see the product plan), so unusual-but-legitimate work cannot be told apart yet. Evasion routes
+  (slow-walking, splitting across sessions, unlisted classes, unlogged allowed calls, same-second pairs) are listed
+  in ADR-0020. The score has no time limit on its points.
+
 ## Implemented in v0.7a (agent gateway; tests in `tests/sentinel/test_gateway.py`, ADR-0016)
 
 ### R9: a decoy touched during an agent session, with no gateway decision for it (S11, S13)

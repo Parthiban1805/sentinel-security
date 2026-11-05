@@ -215,6 +215,34 @@ def steered_agent(
     ]
 
 
+def sensitive_then_outbound(session: str, asset_id: str, now: datetime) -> list[dict[str, Any]]:
+    """S11 (R12): a session tries to read a credential file, then tries an outbound network tool.
+    Two attempts only (fewer than R5b's three), so R12 is the one rule that fires."""
+    steps = [("PF-03", "ssh_key", 0), ("BG-01", "network_tool", 4)]
+    return [
+        make_event(
+            event_type="agent_tool_denied",
+            source="agent_hook",
+            asset_id=asset_id,
+            time=now + timedelta(minutes=minutes),
+            severity="low",
+            confidence="high",
+            evidence_ref=f"simulated/agentlog/seq{i}",
+            event_id=f"simulated:r12:{session}:{i}",
+            is_test=True,
+            attributes={
+                "session": session,
+                "tool": "Bash",
+                "rule": rule,
+                "target_class": cls,
+                "target_fp": f"{i:016x}",
+                "decision": "deny",
+            },
+        )
+        for i, (rule, cls, minutes) in enumerate(steps)
+    ]
+
+
 def unapproved_mcp(server: str, asset_id: str, now: datetime) -> list[dict[str, Any]]:
     """S12 (R5c): the agent calls a tool of an MCP server that nobody approved."""
     from sentinel.inventory.agents import mcp_asset_id

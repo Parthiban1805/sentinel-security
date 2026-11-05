@@ -652,7 +652,7 @@ def verify_agent_hooks(
     if incident is None:
         raise KeyError(f"unknown incident: {iid}")
     if not any(s["step"] == "verify_agent_hooks" for s in incident["response_plan"]):
-        raise ValueError("this incident has no verify_agent_hooks step (it applies to R5b)")
+        raise ValueError("this incident has no verify_agent_hooks step (it applies to R5b and R12)")
     pin = store.get_doc("snapshots", HOOK_PIN_KEY)
     if pin is None:
         raise ValueError(
