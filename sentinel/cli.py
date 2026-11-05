@@ -33,7 +33,7 @@ from sentinel.assistant import explain as ai_explain
 from sentinel.correlation.engine import context_from_store
 from sentinel.correlation.session_risk import attrs_of, safe_text, session_risk
 from sentinel.events.schema import SchemaError, format_time
-from sentinel.incidents import lifecycle, summary, watch
+from sentinel.incidents import lifecycle, summary, timeline, watch
 from sentinel.incidents.lifecycle import IncidentError
 from sentinel.incidents.response import DryRunAdapter
 from sentinel.inventory import agents as agent_inventory
@@ -41,7 +41,7 @@ from sentinel.inventory import assets as inventory
 from sentinel.inventory import credentials, graph
 from sentinel.inventory.blast import link
 from sentinel.redaction import check_free_text
-from sentinel.reporting import markdown, posture
+from sentinel.reporting import markdown, posture, search
 from sentinel.scanners import gitleaks
 from sentinel.security import fingerprint, load_existing_key, load_key
 from sentinel.simulation import evalset, scenarios
@@ -338,6 +338,44 @@ def cmd_incident_show(args: argparse.Namespace) -> int:
     if incident is None:
         raise KeyError(f"unknown incident: {args.id}")
     print(markdown.incident_report(incident), end="")
+    return 0
+
+
+def _existing_store(args: argparse.Namespace) -> Store:
+    """For read-only commands: a mistyped --home must not leave a new empty store behind."""
+    home = _home(args)
+    if not (home / "sentinel.db").exists():
+        raise ValueError(f"no Sentinel state in {home} (run `sentinel run` first, or pass --home)")
+    return Store(home / "sentinel.db")
+
+
+def cmd_incident_timeline(args: argparse.Namespace) -> int:
+    data = timeline.build(_existing_store(args), args.id)
+    if args.json:
+        print(json.dumps(data, indent=2, sort_keys=True))
+    else:
+        print(timeline.format_timeline(data), end="")
+    return 0
+
+
+def cmd_search(args: argparse.Namespace) -> int:
+    now = _now()
+    query = search.Query(
+        credential=args.credential,
+        asset=args.asset,
+        session=args.session,
+        event_type=args.type,
+        source=args.source,
+        since=search.parse_time(args.since, now) if args.since else None,
+        until=search.parse_time(args.until, now) if args.until else None,
+        include_test=args.include_test,
+        limit=args.limit,
+    )
+    result = search.run(_existing_store(args), query, now)
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print(search.format_result(result), end="")
     return 0
 
 
@@ -1280,6 +1318,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--credential-id", required=True, help="key uid or 'apikey:<uid>'")
     p.add_argument("--actor", required=True)
 
+    sch = add(sub, "search", cmd_search, help="structured search of events, incidents, findings")
+    sch.add_argument("--credential", help="credential fingerprint (cred-fp-...), never the value")
+    sch.add_argument("--asset")
+    sch.add_argument("--session", help="hashed agent session id")
+    sch.add_argument("--type", help="event type, e.g. secret_exposure")
+    sch.add_argument("--source")
+    sch.add_argument("--since", help="2026-11-01 or 7d / 12h / 30m")
+    sch.add_argument("--until")
+    sch.add_argument("--include-test", action="store_true", help="include simulated records")
+    sch.add_argument("--limit", type=int, default=100)
+    sch.add_argument("--json", action="store_true")
+
     pst = add(sub, "posture", cmd_posture, help="security posture: three indicators, no score")
     pst.add_argument("--config", default="sentinel.toml")
     pst.add_argument("--json", action="store_true")
@@ -1442,6 +1492,9 @@ def build_parser() -> argparse.ArgumentParser:
     add(inc, "list", cmd_incident_list)
     p = add(inc, "show", cmd_incident_show)
     p.add_argument("id")
+    p = add(inc, "timeline", cmd_incident_timeline, help="labelled timeline from recorded data")
+    p.add_argument("id")
+    p.add_argument("--json", action="store_true")
     for name, func in (("approve", cmd_incident_approve), ("execute", cmd_incident_execute)):
         p = add(inc, name, func)
         p.add_argument("id")

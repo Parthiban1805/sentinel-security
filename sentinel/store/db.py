@@ -185,3 +185,9 @@ class Store:
         with self._connect() as conn:
             rows = conn.execute("SELECT body FROM audit ORDER BY id").fetchall()
         return [json.loads(row[0]) for row in rows]
+
+    def audit_rows(self) -> list[tuple[str, dict[str, Any]]]:
+        """(time, entry) pairs in write order (search and timelines need the time)."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT time, body FROM audit ORDER BY id").fetchall()
+        return [(str(row[0]), json.loads(row[1])) for row in rows]

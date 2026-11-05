@@ -294,7 +294,9 @@ below. Positioning: "evidence-driven", not "autonomous" (principle 1, rule 4).
    115 hours ago, 4 collector errors); security posture is "review, partial" because the GitHub audit is older than
    72 hours. **`sentinel posture`:** three separate indicators (security posture, threat exposure, Sentinel health), each listing
    the evidence behind it; no single unexplained score. Includes a short summary section for founders and CTOs.
-5. **`sentinel search`** (by fingerprint, asset, session, time range) and **`incident timeline`** (confirmed events,
+5. **Built 2026-11-05 (ADR-0022; review "Approve with fixes", all fixed; 49 tests).** `sentinel search` (structured filters, no
+   free text, a pasted secret is refused) and `sentinel incident timeline <ID>` (six labelled sections built only from
+   recorded data). Saved queries and "create a rule from a search" are not built. **`sentinel search`** (by fingerprint, asset, session, time range) and **`incident timeline`** (confirmed events,
    inferred links, missing evidence, alternative explanations, each labelled).
 6. **Scheduled detection drills:** fake canary leaks pushed through the live pipeline, measuring time to detect and to
    open an incident (the section 7 metrics).
