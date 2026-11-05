@@ -85,8 +85,20 @@ Sentinel would fingerprint real keys there. Drive roots and your whole home fold
 Then approve the MCP servers you trust: `uv run sentinel inventory agents`, and for each one
 `uv run sentinel inventory set mcp-<name> --actor Parthiban --approve` (interactive terminal).
 
-## 10. Docker sandbox (v0.7b): set it up (owner)
-Built and tested with a fake Docker; a live run on your machine is the remaining check. About 10 minutes.
+## 10. Docker sandbox (v0.7b): steps 1-5 DONE 2026-11-05; step 6 is yours
+**Done by the agent at the owner's request, 2026-11-05:**
+- Started Docker Desktop and pulled `python:3.11-slim`.
+- Pinned it in `sentinel.toml` as `python@sha256:db20d8506e2f15b6db39b40b6015ca46bae855dec6dd326d462cfe79ae972893`.
+- `sandbox check` reports ready.
+- Live test: 36 passed, none skipped (no network, no `.env`, no Docker socket, uid 65534).
+- A real run copied 199 tracked files and left 1 out.
+
+**Remaining:**
+- Step 6: re-apply the gateway patch and pin the hooks. It changes the agent's own guard hooks, so only you do it.
+- Step 7: the licence, on hold.
+- Optional: strict mode.
+
+Original steps, kept for reference:
 1. Start **Docker Desktop**. Wait for "Engine running" and use Linux containers.
 2. Pull the image and read its digest:
    ```

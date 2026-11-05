@@ -245,7 +245,8 @@ listed in ADR-0016 remain until 7b.
   exemption could be borrowed by a shell function.
 
 No outgoing-traffic allow-list yet (owner choice; needs its own ADR). **Pending, on the owner's side:**
-- pull and pin the image, then confirm the live test,
+- ~~pull and pin the image, then confirm the live test~~: done 2026-11-05. The live test passed (no network, no `.env`, no
+  Docker socket, not root), and a real run worked end to end,
 - re-apply the gateway patch,
 - the Docker Desktop licence (on hold; see ADR-0017).
 
