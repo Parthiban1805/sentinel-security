@@ -112,6 +112,80 @@ def mcp_allowlist_off(home: Path) -> bool:
     return True
 
 
+# --- agent permission manifest (ADR-0024) ---------------------------------------------------------
+MANIFEST_SOURCE = Path("policies") / "agent-manifest.toml"
+
+
+def apply_manifest(
+    home: Path, source: Path, workspace: Path, actor: str, now: datetime
+) -> dict[str, Any]:
+    """Validate the owner's TOML and write the compiled copy the gateway reads (temp file, then
+    swap). A person's decision: the caller makes sure a human is at the terminal."""
+    from sentinel import agentmanifest
+
+    as_given = Path(
+        os.path.abspath(home)
+    ).parent  # the spelling the hook may see (subst, mapped drives)
+    compiled: dict[str, Any] = agentmanifest.compile_manifest(
+        source.read_bytes(),
+        str(as_given),
+        actor,
+        now,
+        source_path=str(source.resolve()),
+        workspace_real=str(workspace),
+    )
+    home.mkdir(parents=True, exist_ok=True)
+    path = home / agentmanifest.COMPILED_NAME
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(compiled, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    return compiled
+
+
+def manifest_off(home: Path) -> bool:
+    """Remove the compiled manifest (the gateway's built-in rules alone apply again)."""
+    from sentinel import agentmanifest
+
+    path = home / agentmanifest.COMPILED_NAME
+    if not path.exists():
+        return False
+    path.unlink()
+    return True
+
+
+def manifest_status(home: Path, source: Path, now: datetime) -> dict[str, Any]:
+    """What the gateway enforces now, and whether the owner's TOML has drifted from it."""
+    import hashlib
+
+    from sentinel import agentmanifest
+
+    state: dict[str, Any] = {"applied": False, "drift": None, "expired": None, "error": None}
+    try:
+        compiled = agentmanifest.load_compiled(str(home))
+    except agentmanifest.ManifestError as exc:
+        return {**state, "error": str(exc)}
+    if compiled is None:
+        state["source_present"] = source.is_file()
+        return state
+    expires = agentmanifest.parse_day(compiled["agent"].get("expires"))
+    state.update(
+        applied=True,
+        agent=compiled["agent"]["id"],
+        applied_by=compiled["applied_by"],
+        applied_at=compiled["applied_at"],
+        expires=expires.isoformat() if expires else None,
+        expired=bool(expires and now.date() > expires),
+    )
+    recorded = Path(compiled["source_path"]) if compiled.get("source_path") else source
+    state["source"] = str(recorded)
+    if recorded.is_file():
+        current = hashlib.sha256(recorded.read_bytes()).hexdigest()
+        state["drift"] = current != compiled["source_sha256"]
+    else:
+        state["drift"] = True  # applied, but the source it came from is gone
+    return state
+
+
 def is_project_state_dir(home: Path) -> bool:
     """True when `home` is the .sentinel folder of a Claude Code project, which is where the
     gateway hook looks ($CLAUDE_PROJECT_DIR/.sentinel, unless SENTINEL_HOME is set)."""

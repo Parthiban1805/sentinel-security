@@ -847,6 +847,91 @@ def cmd_agent_sessions(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_agent_manifest(args: argparse.Namespace) -> int:
+    """ADR-0024: check (anyone), apply and off (a person at a terminal), status."""
+    from sentinel import agentmanifest
+
+    home = _home(args)
+    workspace = home.resolve().parent
+    source = Path(args.file) if args.file else workspace / agentgate.MANIFEST_SOURCE
+    if args.action in ("check", "apply") and not source.is_file():
+        raise ValueError(
+            f"no manifest at {source} (start from policies/agent-manifest.example.toml)"
+        )
+    if args.action == "check":
+        compiled = agentmanifest.compile_manifest(
+            source.read_bytes(), str(workspace), "check", _now()
+        )
+        print(
+            f"{source}: valid (agent {compiled['agent']['id']}, owner {compiled['agent']['owner']})"
+        )
+        return 0
+    if args.action == "apply":
+        _require_human("applying the agent permission manifest")
+        if not agentgate.is_project_state_dir(home):
+            raise ValueError(
+                f"{home} is not the .sentinel folder of a Claude Code project, so the gateway "
+                "would "
+                "never read this manifest; run from the project folder (or pass --home)"
+            )
+        actor = check_free_text("actor", args.actor) or ""
+        if not actor:
+            raise ValueError("--actor is required to apply the manifest")
+        compiled = agentgate.apply_manifest(home, source, workspace, actor, _now())
+        _store(args).add_audit(
+            format_time(_now()),
+            {
+                "action": "agent_manifest_applied",
+                "actor": actor,
+                "source_sha256": compiled["source_sha256"],
+            },
+        )
+        print(
+            f"agent manifest applied for {compiled['agent']['id']} "
+            f"(sha256 {compiled['source_sha256'][:12]})"
+        )
+        fs, net = compiled["filesystem"], compiled["network"]
+        print(
+            f"  read: {len(fs.get('read', ['**']))} glob(s), "
+            f"write: {len(fs.get('write', ['**']))}, "
+            f"deny: {len(fs.get('deny', []))}, ask before writing: {len(fs.get('ask_write', []))}, "
+            f"outside the workspace: {fs.get('outside_workspace', 'allow')}"
+        )
+        print(
+            f"  shell: {compiled['execution'].get('shell', True)}, fetch domains: "
+            f"{len(net['fetch_domains']) if 'fetch_domains' in net else 'any'}, "
+            "MCP servers listed: "
+            f"{len(compiled['mcp']['servers'])} (unlisted: {compiled['mcp']['unlisted']})"
+        )
+        print("Review the TOML before applying: the agent may have edited it.")
+        return 0
+    if args.action == "off":
+        _require_human("turning the agent permission manifest off")
+        was = agentgate.manifest_off(home)
+        if was:
+            actor = check_free_text("actor", args.actor) or ""
+            _store(args).add_audit(
+                format_time(_now()), {"action": "agent_manifest_off", "actor": actor}
+            )
+        print("agent manifest OFF" if was else "no agent manifest was applied")
+        return 0
+    state = agentgate.manifest_status(home, source, _now())
+    if args.json:
+        print(json.dumps(state, indent=2, sort_keys=True))
+    elif state.get("error"):
+        print(f"agent manifest: UNREADABLE ({state['error']}); the gateway allows only reading")
+    elif not state["applied"]:
+        print("agent manifest: not applied (the gateway's built-in rules apply)")
+    else:
+        print(
+            f"agent manifest: applied for {state['agent']} by {state['applied_by']} at "
+            f"{state['applied_at']}; expires {state['expires'] or 'never'}"
+            + ("; EXPIRED (non-read calls ask)" if state["expired"] else "")
+            + ("; DRIFT: the TOML differs from what was applied" if state["drift"] else "")
+        )
+    return 1 if state.get("error") or state.get("drift") or state.get("expired") else 0
+
+
 def cmd_agent_mcp_allowlist(args: argparse.Namespace) -> int:
     home = _home(args)
     path = home / agentgate.MCP_ALLOWLIST_NAME
@@ -1424,6 +1509,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--include-test", action="store_true", help="include simulated sessions")
     p = add(agt, "mcp-allowlist", cmd_agent_mcp_allowlist, help="MCP allow-list status or off")
     p.add_argument("state", choices=["status", "off"])
+    p = add(agt, "manifest", cmd_agent_manifest, help="agent permission manifest (ADR-0024)")
+    p.add_argument("action", choices=["check", "apply", "status", "off"])
+    p.add_argument("--file", help="manifest TOML (default: policies/agent-manifest.toml)")
+    p.add_argument("--actor", default="", help="who applies it (recorded)")
+    p.add_argument("--json", action="store_true")
 
     sb = sub.add_parser("sandbox", help="run code in a no-network Docker sandbox (ADR-0017)")
     sbs = sb.add_subparsers(dest="sub", required=True)

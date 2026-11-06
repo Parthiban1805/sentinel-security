@@ -1,0 +1,31 @@
+# Agent permission manifest (ADR-0024). Copy to policies/agent-manifest.toml, edit, then apply it
+# yourself at a terminal:   uv run sentinel agent manifest apply --actor <you>
+# The manifest can only TIGHTEN the gateway: protected paths, blocked commands and the kill switch
+# always stay in force. Editing this file changes nothing until it is applied again.
+version = 1
+
+[agent]
+id = "claude-code"
+owner = "Parthiban"
+expires = "2026-12-31"          # after this date every non-read call asks first
+
+[filesystem]
+# Globs relative to the workspace: ** = any folders, * = within one name.
+read = ["**"]
+write = ["sentinel/**", "tests/**", "docs/**", "policies/agent-manifest.example.toml"]
+deny = ["**/*.pfx", "**/id_*"]
+ask_write = ["docs/adr/**"]
+outside_workspace = "ask"       # allow | ask | deny (memory and temp files live outside)
+
+[network]
+fetch_domains = ["docs.python.org", "*.github.com", "github.com", "pypi.org"]
+web_search = true
+
+[execution]
+shell = true
+deny_tools = []
+
+# Per MCP server: the only tools the agent may call. Servers not listed here are governed by the
+# MCP allow-list alone (sentinel inventory set mcp-<name> --approve ...).
+# [mcp.servers.github]
+# tools = ["get_file_contents", "list_issues"]

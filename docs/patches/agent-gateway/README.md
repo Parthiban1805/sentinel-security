@@ -3,6 +3,21 @@
 Replaces the separate guard hooks with **one gateway hook for every Claude Code tool call**. The owner applies it, because
 `.claude/` is protected from the agent.
 
+## v0.7d update: agent permission manifest (ADR-0024)
+- **New file `_manifest.py`:** a byte-identical copy of `sentinel/agentmanifest.py`, and a test keeps them
+  identical. `apply-patch.bat` now installs it.
+- **`_policy.decide`** first applies the built-in rules (unchanged, now `_base_decide`). The applied manifest
+  (`.sentinel/agent-manifest.json`) can then only tighten the result: allow becomes ask or deny, ask becomes deny.
+- **No manifest applied:** nothing changes.
+- **Unreadable manifest:** only reading is allowed (MF-05).
+- **After applying the patch:**
+  1. Start a new conversation.
+  2. Run `uv run pytest -q tests/scenarios/test_s11_agent_policy_hooks.py`.
+  3. Re-pin: `uv run sentinel agentlog pin-hooks --actor <you>`. The pin now covers every hook file, including
+     `_manifest.py`, `_policy.py` and `gateway.py`.
+- **To use a manifest:** copy `policies/agent-manifest.example.toml` to `policies/agent-manifest.toml`, edit it, then
+  run `uv run sentinel agent manifest apply --actor <you>` in a terminal.
+
 ## What changes
 - **One hook, `gateway.py` (matcher `*`), backed by `_policy.py`, decides every call:**
   - **Deny:** exit 2, with the reason shown to Claude.

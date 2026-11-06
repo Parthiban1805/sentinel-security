@@ -41,8 +41,14 @@ def _load(name: str) -> ModuleType:
 POLICY = _load("_policy")
 
 
-def decide(home: Path, tool: str, **tool_input: Any) -> Any:
-    return POLICY.decide({"tool_name": tool, "tool_input": tool_input, "cwd": str(home)}, str(home))
+def decide(home: Path, tool: str, *, cwd: Path | None = None, **tool_input: Any) -> Any:
+    """The state folder is `home`. The working folder defaults to it for file tools (relative paths
+    resolve there) and to its parent for shell commands, since commands run inside the state
+    folder are refused (BG-27)."""
+    if cwd is None:
+        cwd = home.parent if "command" in tool_input else home
+    where = str(cwd)
+    return POLICY.decide({"tool_name": tool, "tool_input": tool_input, "cwd": where}, str(home))
 
 
 def run_gateway(home: Path, payload: dict[str, Any]) -> subprocess.CompletedProcess[str]:
@@ -70,7 +76,7 @@ def test_clean_calls_are_allowed_with_a_rule_and_class(tmp_path: Path) -> None:
     assert (d.decision, d.rule, d.cls) == ("allow", "GW-00", "file_access")
     assert d.target == agentgate.normalize_path("src/app.py", str(tmp_path))
     assert decide(tmp_path, "WebSearch", query="x").cls == "tool_call"
-    assert decide(tmp_path, "Bash", command="git status").cls == "command"
+    assert decide(tmp_path, "Bash", command="git status", cwd=tmp_path.parent).cls == "command"
 
 
 def test_file_rules_still_apply(tmp_path: Path) -> None:
@@ -358,7 +364,13 @@ def test_a_link_to_a_secret_is_judged_by_its_target(tmp_path: Path) -> None:
 
 def test_any_shell_tool_gets_the_command_rules(tmp_path: Path) -> None:
     assert decide(tmp_path, "PowerShell", command="Get-Content .env").decision == "deny"
-    assert decide(tmp_path, "PowerShell", command="Get-ChildItem").decision == "allow"
+    project = tmp_path.parent
+    assert decide(tmp_path, "PowerShell", command="Get-ChildItem", cwd=project).decision == "allow"
+
+
+def test_commands_run_inside_the_state_folder_are_refused(tmp_path: Path) -> None:
+    d = decide(tmp_path, "Bash", command="git status", cwd=tmp_path)  # cwd IS the state folder
+    assert (d.decision, d.rule) == ("deny", "BG-27")
 
 
 def test_odd_tool_input_fails_closed(tmp_path: Path) -> None:
