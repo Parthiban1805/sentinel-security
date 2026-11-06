@@ -298,8 +298,11 @@ below. Positioning: "evidence-driven", not "autonomous" (principle 1, rule 4).
    free text, a pasted secret is refused) and `sentinel incident timeline <ID>` (six labelled sections built only from
    recorded data). Saved queries and "create a rule from a search" are not built. **`sentinel search`** (by fingerprint, asset, session, time range) and **`incident timeline`** (confirmed events,
    inferred links, missing evidence, alternative explanations, each labelled).
-6. **Scheduled detection drills:** fake canary leaks pushed through the live pipeline, measuring time to detect and to
-   open an incident (the section 7 metrics).
+6. **Built 2026-11-06 (ADR-0023; review "Approve with fixes", all fixed; 30 tests).** `sentinel drill run` / `drill status`; opt-in
+   schedule through `[drills] interval_hours` in `sentinel run`; posture shows the last drill. First real drill on
+   this machine: leak detected in 0.78 s and the R1 incident opened in 0.83 s (pipeline time only, in a throwaway
+   workspace). **Scheduled detection drills:** fake canary leaks pushed through the live pipeline, measuring time to
+   detect and to open an incident (the section 7 metrics).
 - **Exit:** reach and reached-by on real local data with observed edges; posture report generated from a real run; one
   drill run with measured time to detect; every new rule has tests; security review passed.
 

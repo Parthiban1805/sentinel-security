@@ -16,6 +16,7 @@ from sentinel import (
     audit,
     canaries,
     dependencies,
+    drills,
     findings,
     hygiene,
     probes,
@@ -361,6 +362,19 @@ def run_once(
         return add(credentials.to_events(views, credentials.duplicates(store), now))
 
     guard("credentials", check_credentials)
+
+    if drills.due(store, now, settings.drill_interval_hours):
+        # A scheduled detection drill (ADR-0023): throwaway workspace; only the result is stored.
+        def drill() -> int:
+            result = drills.run_drill(settings.drill_scenario, now=now)
+            drills.record(store, result)
+            if not result.passed:
+                raise ValueError(f"detection drill {result.scenario} failed")
+            return 0
+
+        guard("drill", drill)
+        if health.get("drill", "").startswith("error"):
+            health["drill"] = "warn: the detection drill failed (`sentinel drill status`)"
 
     created = lifecycle.open_incidents(store, now)
     alerted = []

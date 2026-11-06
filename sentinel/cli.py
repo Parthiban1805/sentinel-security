@@ -20,6 +20,7 @@ from sentinel import (
     config,
     coverage,
     doctor,
+    drills,
     findings,
     hygiene,
     onboarding,
@@ -347,6 +348,33 @@ def _existing_store(args: argparse.Namespace) -> Store:
     if not (home / "sentinel.db").exists():
         raise ValueError(f"no Sentinel state in {home} (run `sentinel run` first, or pass --home)")
     return Store(home / "sentinel.db")
+
+
+def cmd_drill_run(args: argparse.Namespace) -> int:
+    """A detection drill in a throwaway workspace (ADR-0023). 0 passed, 2 failed."""
+    store = None if args.no_record else _existing_store(args)  # check before a drill runs
+    result = drills.run_drill(args.scenario)
+    if store is not None:
+        drills.record(store, result)
+    if args.json:
+        print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
+    else:
+        print(drills.format_result(result.as_dict()), end="")
+    return 0 if result.passed else 2
+
+
+def cmd_drill_status(args: argparse.Namespace) -> int:
+    runs = drills.history(_existing_store(args))
+    if args.json:
+        print(json.dumps({"runs": runs}, indent=2, sort_keys=True))
+        return 0
+    if not runs:
+        print("no drill recorded yet (`sentinel drill run`)")
+        return 0
+    print(drills.format_result(runs[-1]), end="")
+    passed = sum(1 for r in runs if r.get("passed"))
+    print(f"{passed} of {len(runs)} recorded drills passed")
+    return 0
 
 
 def cmd_incident_timeline(args: argparse.Namespace) -> int:
@@ -1317,6 +1345,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--project", required=True, help="GCP project id")
     p.add_argument("--credential-id", required=True, help="key uid or 'apikey:<uid>'")
     p.add_argument("--actor", required=True)
+
+    drl = sub.add_parser("drill", help="detection drills (ADR-0023)").add_subparsers(
+        dest="sub", required=True
+    )
+    p = add(drl, "run", cmd_drill_run, help="push a fake leak through the pipeline, timed")
+    p.add_argument("--scenario", choices=list(drills.SCENARIOS), default="leaked-key")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--no-record", action="store_true", help="do not store the result")
+    p = add(drl, "status", cmd_drill_status, help="the recorded drill results")
+    p.add_argument("--json", action="store_true")
 
     sch = add(sub, "search", cmd_search, help="structured search of events, incidents, findings")
     sch.add_argument("--credential", help="credential fingerprint (cred-fp-...), never the value")

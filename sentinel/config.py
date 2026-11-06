@@ -163,6 +163,17 @@ def _credentials(data: dict[str, Any]) -> CredentialPolicy:
     )
 
 
+def _drills(data: dict[str, Any]) -> dict[str, Any]:
+    d = data.get("drills", {})
+    hours = int(d.get("interval_hours", 0))
+    scenario = str(d.get("scenario", "leaked-key"))
+    if not 0 <= hours <= 8760:
+        raise ValueError("[drills] interval_hours must be between 0 (off) and 8760")
+    if scenario not in ("leaked-key", "agent-sequence"):
+        raise ValueError("[drills] scenario must be leaked-key or agent-sequence")
+    return {"drill_interval_hours": hours, "drill_scenario": scenario}
+
+
 @dataclass(frozen=True)
 class Settings:
     scan_paths: tuple[str, ...] = ()
@@ -183,6 +194,8 @@ class Settings:
     assistant: AssistantSettings = field(default_factory=AssistantSettings)
     sandbox: SandboxSettings = field(default_factory=SandboxSettings)
     credentials: CredentialPolicy = field(default_factory=CredentialPolicy)
+    drill_interval_hours: int = 0  # [drills] interval_hours; 0 = no scheduled drills (ADR-0023)
+    drill_scenario: str = "leaked-key"
     extra: dict[str, object] = field(default_factory=dict)
 
 
@@ -234,4 +247,5 @@ def load(path: Path) -> Settings:
         assistant=_assistant(data),
         sandbox=_sandbox(data),
         credentials=_credentials(data),
+        **_drills(data),
     )

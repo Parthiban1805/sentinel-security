@@ -85,8 +85,13 @@ def _config_text(mode: str) -> str:
 
 
 def _child_env() -> dict[str, str]:
-    """gitleaks does not need our tokens."""
-    return {k: v for k, v in os.environ.items() if not k.startswith("SENTINEL_")}
+    """gitleaks does not need our tokens. An inherited GIT_DIR, GIT_WORK_TREE or GIT_INDEX_FILE
+    would make its `git log` read another repository than the target: every GIT_* is dropped."""
+    return {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith("SENTINEL_") and not k.startswith("GIT_")
+    }
 
 
 def run(

@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
-from sentinel import audit
+from sentinel import audit, drills
 from sentinel.config import CredentialPolicy
 from sentinel.correlation.engine import context_from_store
 from sentinel.correlation.session_risk import safe_text as _plain_text
@@ -405,7 +405,7 @@ def _threat(
 def _health(
     store: Store, now: datetime, checks: Sequence[Check] | None, stale_run_hours: int
 ) -> dict[str, Any]:
-    ind = _Indicator("operational health", "Is Sentinel itself working?", total_areas=3)
+    ind = _Indicator("operational health", "Is Sentinel itself working?", total_areas=4)
     ind.measured("last run")
     run, _ = _run_state(store, now, stale_run_hours)
     when = _when(run.get("time")) if run else None
@@ -427,6 +427,35 @@ def _health(
         ind.add("collectors skipped", "low", kinds["skipped"])
     else:
         ind.skip("collector health", "no run is recorded")
+    latest = drills.last(store)
+    when = drills.drill_time(latest)
+    scenario = safe_text(latest.get("scenario"), 20) if latest else ""
+    if latest is None:
+        ind.skip("detection drill", "no detection drill is recorded (`sentinel drill run`)")
+    elif when is None or when > now + CLOCK_SKEW:
+        ind.skip(
+            "detection drill", "the time of the last detection drill is unreadable or in the future"
+        )
+    else:
+        ind.measured("detection drill")
+        ind.add_count(
+            "detection drill failed",
+            "high",
+            0 if latest.get("passed") is True else 1,  # only a real True counts as a pass
+            f"the last detection drill ({scenario}) failed",
+        )
+        age = now - when
+        ind.add_count(
+            "detection drill is old",
+            "medium",
+            1 if age > drills.STALE_AFTER else 0,
+            f"the last detection drill ({scenario}) is {age.days} days old",
+        )
+        if scenario != "leaked-key":
+            ind.skip(
+                "detection drill",
+                f"the last drill was {scenario}: the secret-leak path was not drilled",
+            )
     if checks is None:
         ind.skip("doctor", "the doctor checks were not run")
     else:
@@ -496,7 +525,7 @@ def build(
         _guarded(
             "operational health",
             "Is Sentinel itself working?",
-            3,
+            4,
             lambda: _health(store, now, checks, stale_run_hours),
         ),
     ]
