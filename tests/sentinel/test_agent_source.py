@@ -343,7 +343,8 @@ def r5b_store(tmp_path: Path, *, pin: bool = True) -> tuple[Store, str, Path, Pa
 def test_verify_agent_hooks_passes_when_hooks_match_the_pin(tmp_path: Path) -> None:
     store, iid, _workspace, home = r5b_store(tmp_path)
     passed, evidence = runner.verify_agent_hooks(store, iid, "me", T0, home)
-    assert passed and "chain intact" in evidence and evidence.count("matches pin") == 5
+    assert passed and "chain intact" in evidence
+    assert evidence.count("matches pin") == len(runner.AGENT_HOOK_FILES)
 
 
 def test_editing_the_patch_folder_cannot_make_weakened_hooks_pass(tmp_path: Path) -> None:
@@ -404,3 +405,28 @@ def test_an_overridden_hook_set_cannot_be_pinned(tmp_path: Path) -> None:
     (workspace / ".claude" / "settings.local.json").write_text(json.dumps({"hooks": {}}))
     with pytest.raises(ValueError, match="cannot pin"):
         runner.pin_agent_hooks(Store(tmp_path / "s.db"), workspace, "owner", T0)
+
+
+# --- the pin covers the policy engine and every hook module (v0.7d item 0) ---------------------
+def test_a_changed_policy_engine_fails_verification(tmp_path: Path) -> None:
+    store, iid, workspace, home = r5b_store(tmp_path)
+    (workspace / ".claude" / "hooks" / "_policy.py").write_text("# weakened policy")
+    passed, evidence = runner.verify_agent_hooks(store, iid, "me", T0, home)
+    assert not passed and "_policy.py: CHANGED" in evidence
+
+
+def test_a_hook_module_added_after_the_pin_fails_verification(tmp_path: Path) -> None:
+    store, iid, workspace, home = r5b_store(tmp_path)
+    (workspace / ".claude" / "hooks" / "sneaky.py").write_text("# new module")
+    passed, evidence = runner.verify_agent_hooks(store, iid, "me", T0, home)
+    assert not passed and "sneaky.py: NOT IN PIN" in evidence
+
+
+def test_a_pin_made_before_the_wider_file_list_must_be_renewed(tmp_path: Path) -> None:
+    store, iid, _workspace, home = r5b_store(tmp_path)
+    pin = store.get_doc("snapshots", runner.HOOK_PIN_KEY)
+    assert pin is not None
+    old = {k: v for k, v in pin["files"].items() if k not in ("gateway.py", "_policy.py")}
+    store.put_doc("snapshots", runner.HOOK_PIN_KEY, {**pin, "files": old})
+    passed, evidence = runner.verify_agent_hooks(store, iid, "me", T0, home)
+    assert not passed and "gateway.py: NOT IN PIN" in evidence

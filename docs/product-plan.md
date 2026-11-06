@@ -306,6 +306,31 @@ below. Positioning: "evidence-driven", not "autonomous" (principle 1, rule 4).
 - **Exit:** reach and reached-by on real local data with observed edges; posture report generated from a real run; one
   drill run with measured time to detect; every new rule has tests; security review passed.
 
+### v0.7d: Agent containment  [M]  (scope confirmed by the owner 2026-11-06; started)
+Four ideas from the owner's ORE kernel (P:\development\ore-kernel), reimplemented: ORE is AGPL-3.0, so ideas only, no
+copied code or pattern lists. Choices: egress is a host allow-list without TLS interception; the context firewall
+covers prompts and data sent through tools; WASM is deferred. ORE's own gaps are not inherited (path rules never
+enforced, no redirect, DNS or private-address checks, unknown manifest keys ignored, no memory or time limits, an
+unsandboxed shell mode, stdout-only telemetry, no tests).
+0. **Hook pin covers the policy engine.** Built 2026-11-06. The pin now hashes every `*.py` in `.claude/hooks`
+   (it missed `gateway.py`, `_policy.py` and `scan_written_file.py`), and a file added or removed after the pin fails
+   `verify-agent-hooks`. **Owner action:** re-pin (`uv run sentinel agentlog pin-hooks --actor Parthiban`).
+1. **Agent permission manifest** (ADR-0024): a strict, owner-edited TOML policy (filesystem read, write and deny;
+   network domains; execution; MCP tools; approvals; expiry; version), pinned like the hooks. It can only tighten the
+   gateway. Enforced by a gateway patch the owner applies.
+2. **Context firewall** (ADR-0025): one detector library (secrets, private keys, PII, internal and metadata IPs,
+   injection indicators) counting per occurrence and storing no values. Used on prompts (UserPromptSubmit), on data
+   sent through MCP, WebFetch and WebSearch, and by the AI assistant pack.
+3. **Sandbox egress allow-list** (ADR-0026, amends ADR-0017): an internal Docker network whose only route out is a
+   pinned proxy container. Allowed hosts only; DNS resolved by the proxy, with private, loopback, link-local and
+   metadata addresses refused; plain-HTTP method and path rules; no TLS interception. Each refusal is an
+   `egress_anomaly` event (its first real producer). Off unless `sandbox run --allow-net`.
+4. **WASM backend:** deferred to v1.x. Lessons from ORE: memory and wall-clock limits as well as fuel, fail closed
+   on mount errors, never create host folders for read grants.
+- **Exit:** manifest enforced on the live hooks (owner applied and pinned); a prompt and an MCP call holding a fake
+  key are refused; the sandbox reaches an allowed host and is refused for others and for 169.254.169.254; security
+  review passed for each item.
+
 ### v0.8: Endpoint agent and central service  [L]
 Detailed design happens here; direction is decided (plug-and-play on every employee system).
 - Installer and enrolment (see section 5), local-first agent that syncs, central service and datastore, authentication

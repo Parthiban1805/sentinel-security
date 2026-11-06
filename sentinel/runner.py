@@ -587,11 +587,15 @@ def verify_probe(
     return passed, evidence
 
 
+# Required hook files (a pin also covers every other *.py in the hooks folder).
 AGENT_HOOK_FILES = (
     "_decision_log.py",
+    "_policy.py",
     "bash_guard.py",
-    "protect_sensitive_files.py",
+    "gateway.py",
     "mcp_log.py",
+    "protect_sensitive_files.py",
+    "scan_written_file.py",
     "session_log.py",
 )
 
@@ -609,12 +613,18 @@ def _hooks_state(workspace: Path) -> tuple[dict[str, str], str | None, list[str]
 
     files: dict[str, str] = {}
     problems: list[str] = []
-    for name in AGENT_HOOK_FILES:
-        path = workspace / ".claude" / "hooks" / name
-        if path.is_file():
+    hooks_dir = workspace / ".claude" / "hooks"
+    # Every Python file in the hooks folder is pinned, not only a fixed list: the policy engine
+    # (gateway.py, _policy.py) and any module added later must be covered too.
+    present = sorted(p.name for p in hooks_dir.glob("*.py")) if hooks_dir.is_dir() else []
+    for name in sorted({*present, *AGENT_HOOK_FILES}):
+        path = hooks_dir / name
+        if path.is_file() and not path.is_symlink():
             files[name] = hashlib.sha256(path.read_bytes()).hexdigest()
-        else:
+        elif name in AGENT_HOOK_FILES:
             problems.append(f"{name}: MISSING")
+        else:
+            problems.append(f"{name}: not a regular file")
     settings_hash = None
     for name in ("settings.json", "settings.local.json"):
         path = workspace / ".claude" / name
@@ -675,9 +685,16 @@ def verify_agent_hooks(
     workspace = home.resolve().parent
     files, settings_hash, problems = _hooks_state(workspace)
     lines = list(problems)
-    for name in AGENT_HOOK_FILES:
-        if name in files:
-            same = files[name] == pin["files"].get(name)
+    raw_files = pin.get("files")
+    pinned: dict[str, str] = raw_files if isinstance(raw_files, dict) else {}
+    names = sorted({*files, *pinned})
+    for name in names:
+        if name not in files:
+            lines.append(f"{name}: REMOVED since the pin")
+        elif name not in pinned:
+            lines.append(f"{name}: NOT IN PIN (review it, then re-pin)")
+        else:
+            same = files[name] == pinned[name]
             lines.append(f"{name}: {'matches pin' if same else 'CHANGED'} ({files[name][:12]})")
     settings_same = settings_hash is not None and settings_hash == pin["settings_hooks"]
     lines.append(f"settings.json hooks: {'match pin' if settings_same else 'CHANGED'}")
@@ -685,7 +702,8 @@ def verify_agent_hooks(
     chain_ok = log.ok and not log.dropped and (home / agentlog.LOG_NAME).exists()
     passed = (
         not problems
-        and all(files.get(n) == pin["files"].get(n) for n in AGENT_HOOK_FILES)
+        and set(files) == set(pinned)
+        and all(files[n] == pinned[n] for n in files)
         and settings_same
         and chain_ok
     )
