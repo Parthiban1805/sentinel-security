@@ -315,7 +315,10 @@ unsandboxed shell mode, stdout-only telemetry, no tests).
 0. **Hook pin covers the policy engine.** Built 2026-11-06. The pin now hashes every `*.py` in `.claude/hooks`
    (it missed `gateway.py`, `_policy.py` and `scan_written_file.py`), and a file added or removed after the pin fails
    `verify-agent-hooks`. **Owner action:** re-pin (`uv run sentinel agentlog pin-hooks --actor Parthiban`).
-1. **Agent permission manifest** (ADR-0024): a strict, owner-edited TOML policy (filesystem read, write and deny;
+1. **Live 2026-11-06.** The owner applied the gateway patch (on the second attempt; the first failed safely on Python
+   3.10 and restored the old hooks), 124 scenario tests passed on the live hooks, and 9 hook files were pinned.
+   BG-17 was checked live: an agent-run `mcp-allowlist off` was refused. No manifest is applied yet (optional).
+   **Agent permission manifest** (ADR-0024): a strict, owner-edited TOML policy (filesystem read, write and deny;
    network domains; execution; MCP tools; approvals; expiry; version), pinned like the hooks. It can only tighten the
    gateway. Enforced by a gateway patch the owner applies.
 2. **Context firewall** (ADR-0025): one detector library (secrets, private keys, PII, internal and metadata IPs,
