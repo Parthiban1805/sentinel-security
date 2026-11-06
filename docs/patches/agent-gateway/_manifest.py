@@ -3,6 +3,8 @@
 This file is ALSO the gateway's `.claude/hooks/_manifest.py` (a byte-identical copy shipped by the
 gateway patch; a test keeps them identical). It must therefore import nothing from `sentinel`,
 and `tomllib` is imported only where TOML is parsed (Sentinel side, when a person applies it).
+The hooks run on the first `python` on PATH, which can be 3.10: no 3.11-only names at import or in
+`check` (`timezone.utc`, not `UTC`; a test runs this file under the oldest installed Python).
 
 The manifest can only TIGHTEN the gateway: `check` returns a deny or ask decision, or None.
 """
@@ -14,7 +16,7 @@ import hashlib
 import json
 import os
 import re
-from datetime import UTC, date, datetime
+from datetime import date, datetime, timezone
 from typing import Any
 
 COMPILED_NAME = "agent-manifest.json"
@@ -200,7 +202,7 @@ def compile_manifest(
         workspace=normalize_path(workspace),
         workspace_real=normalize_path(workspace_real or workspace),
         applied_by=actor,
-        applied_at=now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        applied_at=now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
     return compiled
 
@@ -413,7 +415,7 @@ def check(
     now: datetime | None = None,
 ) -> Verdict | None:
     """Extra restriction for one tool call: (decision, rule, class, reason) or None."""
-    now = now or datetime.now(UTC)
+    now = now or datetime.now(timezone.utc)
     results: list[Verdict] = []
     if tool in manifest.get("execution", {}).get("deny_tools", []):
         results.append(("deny", "MF-10", "manifest_tool", f"the agent manifest denies {tool}"))

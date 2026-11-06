@@ -59,6 +59,9 @@ select = ["E", "F", "I", "B", "UP", "S"]
 "tests/**" = ["S101", "S603", "S607", "E501"]
 "scripts/**" = ["S603", "S607"]
 "sentinel/alerts.py" = ["E501"]  # embedded PowerShell script
+# Also the gateway hook's _manifest.py, run by the first `python` on PATH (3.10 here): keep
+# timezone.utc, which ruff would otherwise rewrite to the 3.11-only datetime.UTC.
+"sentinel/agentmanifest.py" = ["UP017"]
 "sentinel/dependencies.py" = ["E501"]  # popular-package data lists
 "sentinel/simulation/evalset.py" = ["E501"]  # case table: one readable line per expectation
 "sentinel/assistant/prompt.py" = ["E501"]

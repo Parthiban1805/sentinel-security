@@ -267,6 +267,52 @@ def test_import_failure_of_the_manifest_module_fails_closed(
     assert d.decision == "allow"
 
 
+# the hook runs on the first `python` on PATH, which may be 3.10 ---------------------------------
+def _python310() -> list[str] | None:
+    import shutil
+    import subprocess
+
+    if shutil.which("py") is None:
+        return None
+    probe = subprocess.run(["py", "-3.10", "-c", "print(1)"], capture_output=True, check=False)  # noqa: S603, S607
+    return ["py", "-3.10"] if probe.returncode == 0 else None
+
+
+def test_the_gateway_with_a_manifest_runs_on_python_310(tmp_path: Path, ws: Path) -> None:
+    """Regression (2026-11-06): `from datetime import UTC` broke the patch on the owner's 3.10."""
+    import os
+    import subprocess
+
+    python = _python310()
+    if python is None:
+        pytest.skip("Python 3.10 is not installed here")
+    home = tmp_path / "home"
+    install(home, compiled(tmp_path, TOML.replace("shell = false", "shell = true")))
+    env = {
+        "SENTINEL_HOME": str(home),
+        "PATH": os.environ.get("PATH", ""),
+        "SystemRoot": "C:\\Windows",
+    }
+
+    def run(tool: str, tool_input: dict[str, Any]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # noqa: S603
+            [*python, "-I", str(GATEWAY / "gateway.py")],
+            input=json.dumps(payload(tool, tool_input, ws)),
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+
+    allowed = run("Read", {"file_path": str(ws / "src" / "lib" / "a.py")})
+    assert allowed.returncode == 0 and "Traceback" not in allowed.stderr
+    denied = run("Write", {"file_path": str(ws / "README.md")})
+    assert denied.returncode == 2 and "MF-02" in denied.stderr
+    (home / agentmanifest.COMPILED_NAME).write_text("{broken", encoding="utf-8")
+    broken = run("Write", {"file_path": str(ws / "src" / "a.py")})
+    assert broken.returncode == 2 and "MF-05" in broken.stderr
+
+
 # CLI: apply only into a project's state folder ------------------------------------------------
 def test_apply_outside_a_project_state_folder_is_refused(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
