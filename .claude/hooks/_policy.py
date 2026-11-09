@@ -108,8 +108,16 @@ BASH_RULES = [
      "this Docker command can reach the host; use sentinel sandbox run instead"),
     ("BG-25", "container_cli", r"(^|[;&|(]\s*)(docker|podman|nerdctl)(\.exe)?\b", "ask",
      "runs a container command; the sandbox is the reviewed way to run code in Docker"),
-    ("BG-17", "gateway_control", r"\bkill-switch\s+off\b", "deny",
-     "only a person at a terminal may turn the agent kill switch off"),
+    # Every human-only Sentinel action. The CLI also checks for a terminal, but a new console
+    # (start, Start-Process) has one, so the agent must not run these at all.
+    ("BG-17", "gateway_control",
+     r"\bkill-switch\s+off\b|\bmanifest\s+(off|apply)\b|\bmcp-allowlist\s+off\b"
+     r"|\bsandbox\s+strict\s+off\b|\bpin-hooks\b|\bcreds\s+set\b|\binventory\s+set\b"
+     r"|\bagentlog\s+archive\b", "deny",
+     "this Sentinel action is a person's decision; ask the user to run it in their own terminal"),
+    ("BG-26", "state_dir_access",
+     r"\b(cd|pushd|chdir|set-location|sl|push-location)\b" + _SEG_END + _STATE, "deny",
+     "Sentinel's state folder is protected; use the sentinel CLI"),
     ("BG-18", "package_run",
      r"\b(npx|uvx|bunx|pnpx)\b|\bpipx\s+run\b|\b(npm|pnpm)\s+(exec|dlx)\b|\byarn\s+dlx\b"
      r"|\buv\s+(run|tool\s+run)\b" + _SEG_END + r"--with\b",
@@ -563,8 +571,43 @@ def _mcp(tool, home):
     )  # fmt: skip
 
 
+MANIFEST_NAME = "agent-manifest.json"
+_RANK = {"allow": 0, "allow_mcp": 0, "ask": 1, "deny": 2}
+
+
 def decide(data, home):
-    """The decision for one hook payload (dict). Never raises: any internal error denies."""
+    """The decision for one hook payload (dict). Never raises: any internal error denies.
+
+    The built-in rules decide first; the agent manifest (ADR-0024) can then only tighten that
+    decision (allow -> ask or deny, ask -> deny), never loosen it."""
+    base = _base_decide(data, home)
+    if base.decision == "deny" or not _present(os.path.join(home, MANIFEST_NAME)):
+        return base
+    tool = str(data.get("tool_name") or "")
+    try:
+        import _manifest
+
+        manifest = _manifest.load_compiled(home)
+    except Exception:  # noqa: BLE001 - a manifest that cannot be read must not open the door
+        if tool in READ_ONLY_TOOLS:
+            return base
+        return Decision("deny", "MF-05", "manifest_error",
+                        "the agent manifest cannot be read; only reading is allowed", "")  # fmt: skip
+    if manifest is None:
+        return base
+    try:
+        tool_input = data.get("tool_input") if isinstance(data.get("tool_input"), dict) else {}
+        extra = _manifest.check(manifest, tool, tool_input, str(data.get("cwd") or ""))
+    except Exception:  # noqa: BLE001 - fail closed
+        return Decision("deny", "MF-99", "manifest_error",
+                        "the agent manifest could not be evaluated", "")  # fmt: skip
+    if extra is None or _RANK[extra[0]] <= _RANK.get(base.decision, 0):
+        return base
+    return Decision(extra[0], extra[1], extra[2], extra[3], base.target)
+
+
+def _base_decide(data, home):
+    """The built-in rules for one hook payload. Never raises: any internal error denies."""
     try:
         tool = str(data.get("tool_name") or "")
         tool_input = data.get("tool_input")
@@ -584,7 +627,13 @@ def decide(data, home):
         if tool in FILE_TOOLS:
             return _file(tool, tool_input, cwd)
         command = tool_input.get("command")
-        if tool == "Bash" or isinstance(command, str):  # Bash, PowerShell and any other shell tool
+        if tool == "Bash" or "command" in tool_input:  # Bash, PowerShell and any other shell tool
+            state = normalize_path(home).rstrip("/")
+            where = normalize_path(cwd) if cwd else ""
+            if where and (where == state or where.startswith(state + "/")):
+                # `cd .sentinel` in an earlier call, then `del x`: the folder is the target.
+                return Decision("deny", "BG-27", "state_dir_access",
+                                "commands may not run inside Sentinel's state folder", "")  # fmt: skip
             text = command if isinstance(command, str) else ""
             return _command(text, home) if text else Decision("allow", "GW-00", "command", "", "")
         return Decision("allow", "GW-00", "tool_call", "", "")
