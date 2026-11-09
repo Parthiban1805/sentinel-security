@@ -268,6 +268,18 @@ def test_google_errors_give_a_next_step_without_echoing_the_body() -> None:
     assert "secret-ish" not in str(caught.value)
 
 
+def test_google_messages_without_reason_codes_are_still_classified() -> None:
+    from sentinel.sources.http import error_hint
+
+    scopes = b'{"error":{"code":403,"message":"Request had insufficient authentication scopes.",'
+    scopes += b'"status":"PERMISSION_DENIED"}}'
+    missing = b'{"error":{"code":403,"message":"Permission monitoring.timeSeries.list denied '
+    missing += b'(or the resource may not exist).","status":"PERMISSION_DENIED"}}'
+    assert error_hint(scopes) == "scope_insufficient"
+    assert error_hint(missing) == "denied_or_missing"
+    assert error_hint(b'{"error":{"status":"PERMISSION_DENIED"}}') == "no_permission"
+
+
 def test_an_empty_body_is_an_error_not_an_empty_list() -> None:
     import pytest
 

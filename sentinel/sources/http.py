@@ -53,12 +53,14 @@ def error_hint(body: bytes) -> str | None:
         return "not_protected"
     if "service_disabled" in text:
         return "api_disabled"
-    if "access_token_scope_insufficient" in text:
+    if "access_token_scope_insufficient" in text or "insufficient authentication scopes" in text:
         return "scope_insufficient"
     if "user_project_denied" in text or "quota project" in text:
         return "quota_project"
     if "rate_limit_exceeded" in text or "ratelimitexceeded" in text:
         return "rate_limited"
+    if "or the resource may not exist" in text:
+        return "denied_or_missing"  # Google's wording when it will not say which of the two
     if "permission_denied" in text:
         return "no_permission"
     return None
@@ -72,6 +74,8 @@ HINT_ADVICE = {
     "set-quota-project <project-id>`)",
     "rate_limited": "rate limited by the provider (try again later)",
     "no_permission": "this account lacks a permission or role for this call",
+    "denied_or_missing": "permission denied, or the requested resource does not exist "
+    "(Google does not say which)",
 }
 
 
