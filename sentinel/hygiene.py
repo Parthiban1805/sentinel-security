@@ -289,15 +289,35 @@ def check_dependencies(repo: Path) -> list[Finding]:
     return out
 
 
-def scan_repo(repo: Path, ignore: tuple[str, ...] = ()) -> list[Finding]:
-    """Run every check. `ignore` entries look like "H2:server/.env" or "W4:*"."""
+def check_workflows_zizmor(repo: Path, existing: list[Finding]) -> list[Finding]:
+    """zizmor's YAML-aware audits (ADR-0029), when zizmor is on PATH. Not installed: nothing (the
+    regex checks W1-W6 still run; `doctor` says so). A failed run is reported, never silent."""
+    from sentinel.scanners import zizmor
+
+    exe = zizmor.find_zizmor()
+    if exe is None:
+        return []
+    try:
+        found = zizmor.parse(zizmor.run(repo, exe=exe), repo)
+    except zizmor.ZizmorError as exc:
+        return [Finding("ZZ-error", "low", ".github/workflows",
+                        f"{exc}; CI checks are regex-only (W1-W6) for this run")]  # fmt: skip
+    return zizmor.to_hygiene(found, existing)
+
+
+def scan_repo(
+    repo: Path, ignore: tuple[str, ...] = (), *, use_zizmor: bool = True
+) -> list[Finding]:
+    """Run every check. `ignore` entries look like "H2:server/.env", "W4:*" or "ZZ-artipacked:*"."""
     if not (repo / ".git").exists():
         return []
+    workflows = check_workflows(repo)
     found = (
         check_files(repo)
         + check_gitignore(repo)
         + check_scanning(repo)
-        + check_workflows(repo)
+        + workflows
+        + (check_workflows_zizmor(repo, workflows) if use_zizmor else [])
         + check_dependencies(repo)
     )
     return [f for f in found if not _ignored(f, ignore)]

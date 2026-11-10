@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from sentinel import agentlog, config, runner
-from sentinel.scanners import gitleaks
+from sentinel.scanners import gitleaks, zizmor
 from sentinel.security import load_key
 from sentinel.store.db import Store
 
@@ -37,6 +37,22 @@ def check_gitleaks() -> Check:
         return Check("gitleaks", "ok", gitleaks.find_gitleaks())
     except gitleaks.ScanError:
         return Check("gitleaks", "fail", "not found on PATH (install gitleaks)")
+
+
+def check_zizmor() -> Check:
+    """Optional (ADR-0029): without zizmor the CI checks are Sentinel's regex checks only."""
+    exe = zizmor.find_zizmor()
+    if exe is None:
+        return Check("zizmor", "warn", "not installed: CI workflow checks are regex-only (W1-W6)")
+    found = zizmor.version(exe)
+    if found != zizmor.PINNED_VERSION:
+        return Check(
+            "zizmor",
+            "warn",
+            f"version {found or 'unknown'} at {exe}; the reviewed version is "
+            f"{zizmor.PINNED_VERSION}",
+        )
+    return Check("zizmor", "ok", f"{found} at {exe} (runs offline)")
 
 
 def check_state_dir(home: Path) -> Check:
@@ -186,6 +202,7 @@ def run_checks(home: Path, config_path: Path, root: Path) -> list[Check]:
     settings = config.load(config_path) if config_path.exists() else config.Settings()
     checks: list[Callable[[], Check]] = [
         check_gitleaks,
+        check_zizmor,
         lambda: check_state_dir(home),
         lambda: check_fingerprint_key(home),
         lambda: check_gitignore(root),
