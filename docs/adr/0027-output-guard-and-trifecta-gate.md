@@ -74,6 +74,24 @@ own gap: "content the agent reads from files is not filtered". Two lines of rese
     - Other channels are not covered: Edit and Write (their own PostToolUse check exists), Glob and LS listings,
       sub-agent transcripts, Bash network tools (already denied by BG-01), `git push` and `gh` (asked by settings).
     - PII alone does not set leg S: author emails in `git log` would mark nearly every session.
+    - **Transformed output is not recognised:** `base64`, `xxd`, `rev` or `cut -c1-20` turn a key into text that
+      matches no known format, so it is neither redacted nor does it set leg S. An injected instruction can ask
+      for exactly this. The detectors are patterns, not a boundary.
+    - Tool names outside the matcher (for example a tool that reads background shell output, or MCP resource
+      tools without the `mcp__` prefix) are not guarded; confirm the names in the installed version.
+- **Amendment after the security review (2026-11-06):**
+  - Detectors run in linear time on hostile input: the JWT pattern starts only outside a run of key characters,
+    the known-format overlap check uses merged spans and bisection, and a private key block is matched to its END
+    line within 8,000 characters, else only the header and the base64 or `Header: value` lines after it (a stray
+    header no longer hides the rest of the output). Timing tests cover each case.
+  - A key right after an escape (`\n`, `\t`, `\r`, `\uXXXX`, `%XX` in JSON or log text) is found and redacted.
+  - Redaction joins overlapping matches into one tag, keeps the newlines of a replaced block (line numbers do not
+    shift), redacts dict keys, replaces a leaf it cannot check by `[REDACTED:unscannable]`, and reports a key
+    deeper than it recurses. A lone surrogate no longer breaks the fingerprint.
+  - The output guard marks leg U before parsing and on every failure path, salvages unparseable input, and
+    records a leg it could not write (OG-98). A marker folder that is not a folder makes the gate ask (TF-99).
+  - TF-01 wins a tie with an earlier ask (FW-03, a manifest ask) and carries its reason, so the log names TF-01.
+    A refused data-leaving call after both legs (FW-01, FW-02, MCP-02, ...) also opens R13.
 - **Operations:**
   - The owner applies the patch (`apply-patch.bat`) and re-pins the hooks: two new hook files.
   - **Live drill after applying:** in a new session, read a harness-generated canary file and confirm Claude

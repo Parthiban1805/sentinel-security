@@ -93,8 +93,20 @@ def discover(store: Store, root: Path, now: datetime) -> list[str]:
     return added
 
 
+# Assets whose approval decides what the agent gateway trusts (ADR-0016, ADR-0028). They come from
+# discovery (`inventory agents`) and are approved with `inventory set` by a person; an import file,
+# which the agent could write, must not create or approve them.
+_GATEWAY_TYPES = frozenset({"mcp_server", "ai_agent"})
+
+
 def import_assets(store: Store, path: Path) -> int:
     records = json.loads(path.read_text(encoding="utf-8"))
+    for record in records:
+        if isinstance(record, dict) and record.get("asset_type") in _GATEWAY_TYPES:
+            raise ValueError(
+                f"{record.get('asset_type')} assets cannot be imported: use `sentinel inventory "
+                "agents` to discover them and `sentinel inventory set` to approve them"
+            )
     for record in records:
         store.upsert_asset(record)  # validates against the asset schema
     return len(records)

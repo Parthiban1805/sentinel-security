@@ -34,8 +34,6 @@ def fakes() -> dict[str, str]:
 
 def test_the_hook_copy_is_identical() -> None:
     copy = ROOT / "docs" / "patches" / "agent-gateway" / "_firewall.py"
-    if not copy.exists():
-        pytest.skip("the gateway patch does not ship the firewall yet")
     assert copy.read_bytes() == (ROOT / "sentinel" / "contextfirewall.py").read_bytes()
 
 
@@ -245,3 +243,109 @@ def test_redact_very_deep_input_is_reported_not_crashed() -> None:
         deep = [deep]
     _, info = fw.redact(deep)
     assert info["partial"] is True
+
+
+# --- security review 2026-11-06: hostile input, escapes, surrogates, overlaps -------------------
+def _fast(fn, text: object, limit: float = 10.0) -> None:  # type: ignore[no-untyped-def]
+    import time
+
+    started = time.monotonic()
+    fn(text)
+    assert time.monotonic() - started < limit
+
+
+def test_jwt_lookalike_input_is_linear() -> None:
+    hostile = "eyJ-" * 250_000  # every 'eyJ' used to start a match that ran to the end
+    _fast(fw.scan, hostile)
+    _fast(fw.redact, hostile)
+    _fast(fw.scan, "eyJ_" * 250_000)
+    _fast(fw.scan, ("eyJaaaaaaaaaaa." * 60_000))
+
+
+def test_many_spans_and_tokens_are_linear() -> None:
+    lines = "password=a1234567\n" * 20_000 + ("A1b2C3d4" * 4 + " ") * 20_000
+    _fast(fw.scan, lines)
+
+
+def test_many_unterminated_private_key_headers_are_linear() -> None:
+    label = "RSA " + "PRIVATE KEY"
+    text = ("-----BEGIN " + label + "-----\n") * 30_000
+    _fast(fw.scan, text)
+    _fast(fw.redact, text)
+
+
+@pytest.mark.parametrize("lead", ["\n", "\t", "\r", "\u003d", "%3D", "%0A", "\n", "="])
+@pytest.mark.parametrize("kind", list(fakes()))
+def test_a_key_after_an_escape_sequence_is_found_and_redacted(kind: str, lead: str) -> None:
+    value = fakes()[kind]
+    text = f"line{lead}{value} end"
+    assert fw.scan(text)["counts"].get(kind) == 1
+    out, info = fw.redact(text)
+    assert value not in out and info["counts"] == {kind: 1} and info["unredacted"] == {}
+
+
+def test_a_lone_surrogate_does_not_defeat_redaction() -> None:
+    label = "RSA " + "PRIVATE KEY"
+    pem = "-----BEGIN " + label + "-----\n\ud800\n-----END " + label + "-----"
+    out, info = fw.redact({"a": pem, "b": "\ud800" + "ghp_" + rand(36)})
+    assert "\ud800" not in json.dumps(out["a"]) and "ghp_" not in out["b"]
+    assert info["counts"] == {"github_token": 1, "private_key": 1}
+
+
+def test_a_leaf_that_cannot_be_checked_is_replaced_not_passed_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken(kind: str, value: str) -> str:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(fw, "_tag", broken)
+    value = "ghp_" + rand(36)
+    out, info = fw.redact({"a": f"x {value}", "b": "plain"})
+    assert out == {"a": "[REDACTED:unscannable]", "b": "plain"}
+    assert info["counts"] == {"unscannable": 1}
+
+
+def test_a_credential_used_as_a_dict_key_is_redacted() -> None:
+    value = "ghp_" + rand(36)
+    out, info = fw.redact({value: "x", "stdout": "ok"})
+    assert value not in json.dumps(out) and "stdout" in out and info["redacted"] == 1
+
+
+def test_a_credential_nested_too_deeply_is_reported() -> None:
+    nested: object = "ghp_" + rand(36)
+    for _ in range(80):
+        nested = [nested]
+    _, info = fw.redact({"stdout": "", "x": nested})
+    assert info["partial"] is True and info["unredacted"] == {"github_token": 1}
+
+
+def test_overlapping_matches_become_one_redaction_and_redact_is_idempotent() -> None:
+    key = fake_google_key()
+    jwt_like = "eyJ" + rand(12) + "." + key + "." + rand(12)  # a google key inside a jwt
+    out, info = fw.redact("t " + jwt_like + " end")
+    assert out.count("[REDACTED:") == 1 and key not in out and "eyJ" not in out
+    assert info["redacted"] == 1
+    assert fw.redact(out)[0] == out
+
+
+def test_merge_spans_joins_overlaps_and_keeps_the_longest_kind() -> None:
+    merged = fw._merge_spans([(5, 20, "b"), (0, 10, "a"), (30, 35, "c"), (35, 40, "d")])
+    assert merged == [(0, 20, "b"), (30, 35, "c"), (35, 40, "d")]
+
+
+def test_redaction_keeps_the_line_count() -> None:
+    label = "RSA " + "PRIVATE KEY"
+    pem = "-----BEGIN " + label + "-----\n" + rand(64) + "\n" + rand(64) + "\n-----END " + label
+    text = "a\n" + pem + "-----\nb\n"
+    out, _ = fw.redact(text)
+    assert out.count("\n") == text.count("\n") and out.startswith("a\n[REDACTED:private_key:")
+    assert out.endswith("\nb\n")
+
+
+def test_an_unterminated_private_key_header_does_not_hide_the_rest_of_the_text() -> None:
+    label = "OPENSSH " + "PRIVATE KEY"
+    body1, body2 = rand(64), rand(64)
+    text = f"-----BEGIN {label}-----\n{body1}\n{body2}\nregular prose with a later grep hit\n"
+    out, info = fw.redact(text)
+    assert body1 not in out and body2 not in out
+    assert "regular prose with a later grep hit" in out and info["counts"] == {"private_key": 1}

@@ -21,6 +21,7 @@ from sentinel import (
     hygiene,
     probes,
 )
+from sentinel.agentgate import refresh_mcp_allowlist
 from sentinel.config import ProbeHost, Settings, validate_extra_path
 from sentinel.events.schema import format_time
 from sentinel.incidents import lifecycle
@@ -338,8 +339,9 @@ def run_once(
 
         def agent_inventory() -> int:
             agent = register_agent(store, workspace, now)
-            servers, _skipped = discover_mcp(store, workspace, now)
+            servers, _skipped = discover_mcp(store, workspace, now, key)  # ADR-0028
             graph.refresh_agent_edges(store, agent, servers, now)  # ADR-0018
+            refresh_mcp_allowlist(store, home)  # pins and cleared approvals (ADR-0028)
             return 0
 
         # Events first, in their own guard: a broken .mcp.json (which an agent can write) must
@@ -592,10 +594,13 @@ AGENT_HOOK_FILES = (
     "_decision_log.py",
     "_firewall.py",
     "_manifest.py",
+    "_mcppin.py",
     "_policy.py",
+    "_taint.py",
     "bash_guard.py",
     "gateway.py",
     "mcp_log.py",
+    "output_guard.py",
     "prompt_guard.py",
     "protect_sensitive_files.py",
     "scan_written_file.py",

@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from sentinel import mcppin
 from sentinel.events.schema import format_time
 from sentinel.security import fingerprint
 from sentinel.store.db import Store
@@ -68,27 +69,42 @@ def kill_switch_status(home: Path) -> dict[str, Any] | None:
 
 
 # --- MCP allow-list -------------------------------------------------------------------------------
-def mcp_allowlist(store: Store) -> dict[str, dict[str, str]]:
-    """Approved MCP servers: name -> owner, pinned version, review date."""
-    out: dict[str, dict[str, str]] = {}
+def _tool_list(value: Any) -> list[str]:
+    names = value.split(",") if isinstance(value, str) else value if isinstance(value, list) else []
+    return sorted({str(n).strip() for n in names if str(n).strip()})
+
+
+def mcp_allowlist(store: Store) -> dict[str, dict[str, Any]]:
+    """Approved MCP servers: name -> owner, pinned version, review date, and when set the keyed
+    launch-settings hash (`config_hash`, ADR-0028), the pinned tool list and `trusted`."""
+    out: dict[str, dict[str, Any]] = {}
     for a in store.assets():
         if a["asset_type"] != "mcp_server" or not a.get("approved"):
             continue
         attrs = a.get("attributes") or {}
         name = str(attrs.get("server") or a["name"])
-        out[name] = {
+        entry: dict[str, Any] = {
             "owner": str(a.get("owner") or ""),
             "pinned_version": str(attrs.get("pinned_version") or ""),
             "reviewed": str(attrs.get("reviewed") or ""),
         }
+        if attrs.get("config_hash"):
+            entry["config_hash"] = str(attrs["config_hash"])
+        tools = _tool_list(attrs.get("tools"))
+        if tools:
+            entry["tools"] = tools
+        if str(attrs.get("trusted", "")).lower() in ("true", "yes", "1"):
+            entry["trusted"] = True  # the output guard does not mark its results untrusted
+        out[name] = entry
     return out
 
 
-def write_mcp_allowlist(store: Store, home: Path) -> Path | None:
+def write_mcp_allowlist(store: Store, home: Path, workspace: Path | None = None) -> Path | None:
     """Write the file the gateway reads. Once allow-list mode is on it STAYS on: unapproving the
     last server leaves an empty list (every MCP server blocked), never "no file" (every server
     allowed). Only `sentinel agent mcp-allowlist off`, run by a person, returns to record-only.
-    Written to a temp file first, then swapped in."""
+    Written to a temp file first, then swapped in. With `workspace`, the launch-settings check
+    (`mcp-drift.json`) is refreshed too, so a server just re-approved is usable at once."""
     path = home / MCP_ALLOWLIST_NAME
     servers = mcp_allowlist(store)
     if not servers and not path.exists():
@@ -99,7 +115,49 @@ def write_mcp_allowlist(store: Store, home: Path) -> Path | None:
         json.dumps({"servers": servers}, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     os.replace(tmp, path)
+    if workspace is not None:
+        mcppin.write_drift(str(home), str(workspace))
     return path
+
+
+def refresh_mcp_allowlist(store: Store, home: Path) -> Path | None:
+    """After discovery: rewrite the allow-list from the store if allow-list mode is on, so new pins
+    and cleared approvals reach the gateway (security review 2026-11-10: they stayed in the store
+    only). Never turns allow-list mode on, and leaves the drift file to the session check."""
+    if not (home / MCP_ALLOWLIST_NAME).exists():
+        return None
+    return write_mcp_allowlist(store, home)
+
+
+def drift_workspace(home: Path) -> Path:
+    """The project the session check last ran for; else the folder that holds `home`."""
+    data = mcppin.read_drift(str(home))
+    recorded = str((data or {}).get("workspace") or "")
+    return Path(recorded) if recorded else home.resolve().parent
+
+
+def pin_mcp_tools(home: Path, server: str, since: str = "") -> list[str]:
+    """Tool names of `server` the gateway let through (allow_mcp) at or after `since` (an ISO date
+    or time, e.g. the approval's review date), from the decision log. The log's hash chain is
+    verified first: a log that fails verification pins nothing."""
+    from sentinel import agentlog
+
+    path = home / "agent-decisions.jsonl"
+    if not path.exists():
+        return []
+    result = agentlog.verify(path)
+    if not result.ok:
+        raise ValueError("the agent decision log failed verification; pin the tools with --tools")
+    found: set[str] = set()
+    for entry in result.records:
+        tool = str(entry.get("tool", ""))
+        if entry.get("decision") != "allow_mcp" or str(entry.get("time", "")) < since:
+            continue
+        # Same parse as the gateway: the server is everything before the LAST '__'.
+        head, _, name = tool.rpartition("__")
+        if head == f"mcp__{server}" and name:
+            found.add(name)
+    return sorted(found)
 
 
 def mcp_allowlist_off(home: Path) -> bool:

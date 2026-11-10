@@ -158,3 +158,38 @@ def test_a_leg_set_by_a_guard_error_is_not_called_a_seen_credential() -> None:
     (m,) = r13_trifecta_gate(events, Context())
     text = " ".join(m.facts)
     assert "no credential confirmed" in text and "OG-99" in text and "precaution" in text
+
+
+# security review 2026-11-06: a refused call after both legs counts too ---------------------------
+def denied_call(minutes: float, tool: str, rule: str, cls: str, n: int) -> dict[str, Any]:
+    event = guard_event(minutes, rule, "deny", cls, tool=tool, n=n)
+    event["event_type"] = "agent_tool_denied"
+    return event
+
+
+def legs_events() -> list[dict[str, Any]]:
+    return [
+        guard_event(0, "OG-10", "taint", "untrusted_input", tool="WebFetch", n=1),
+        guard_event(2, "OG-01", "output_redacted", "output_secret", n=2),
+    ]
+
+
+def test_a_refused_data_leaving_call_after_both_legs_opens_r13() -> None:
+    events = [*legs_events(), denied_call(5, "WebFetch", "FW-01", "firewall_secret", 3)]
+    (m,) = r13_trifecta_gate(events, Context())
+    assert m.rule_id == "R13" and any("1 refused" in f for f in m.facts)
+    assert m.event_ids[-1] == events[-1]["event_id"]
+
+
+def test_a_refusal_before_the_legs_or_of_a_local_tool_is_not_r13() -> None:
+    early = denied_call(-3, "WebFetch", "FW-01", "firewall_secret", 9)
+    local = denied_call(6, "Bash", "BG-01", "network_tool", 8)
+    one_leg = [legs_events()[1], denied_call(5, "WebFetch", "FW-01", "firewall_secret", 7)]
+    assert r13_trifecta_gate([early, *legs_events(), local], Context()) == []
+    assert r13_trifecta_gate(one_leg, Context()) == []
+
+
+def test_asks_and_refusals_in_one_session_are_one_incident() -> None:
+    events = [*tainted_session(), denied_call(8, "mcp__x__send", "FW-01", "firewall_secret", 7)]
+    (m,) = r13_trifecta_gate(events, Context())
+    assert any("2 asked about" in f and "1 refused" in f for f in m.facts)

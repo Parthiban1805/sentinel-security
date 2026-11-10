@@ -18,11 +18,20 @@ import math
 import re
 import socket
 import unicodedata
+from bisect import bisect_left, bisect_right
 from collections import Counter
 from typing import Any
 from urllib.parse import unquote
 
-_START = r"(?<![A-Za-z0-9_])"  # not inside a longer word (risk-..., self_hf_...)
+# A key may start where the previous character is not part of a word (risk-..., self_hf_...), or
+# right after an escape: a literal \n \t \r, \uXXXX or %XX in JSON or log text (security review
+# 2026-11-06: "\nghp_..." has a letter before the key and was missed). Each lookbehind has a
+# fixed width.
+_ESCAPED = r"(?<=\\[nrtbf])|(?<=%[0-9A-Fa-f]{2})|(?<=\\u[0-9A-Fa-f]{4})"
+_START = r"(?:(?<![A-Za-z0-9_])|" + _ESCAPED + ")"
+# A JWT run may contain '-' and '_', so a start inside another run (eyJ-eyJ-eyJ-...) would run to
+# the end of the text and fail: quadratic. Start only outside a run of key characters.
+_JWT_START = r"(?:(?<![0-9A-Za-z_\-])|" + _ESCAPED + ")"
 # kind -> (category, pattern). Known formats: a hit is treated as a real credential.
 _PATTERNS: dict[str, tuple[str, re.Pattern[str]]] = {
     "private_key": (
@@ -42,7 +51,9 @@ _PATTERNS: dict[str, tuple[str, re.Pattern[str]]] = {
     "slack_token": ("secret", re.compile(_START + r"xox[abprs]-[0-9A-Za-z\-]{10,}")),
     "jwt": (
         "secret",
-        re.compile(_START + r"eyJ[0-9A-Za-z_\-]{10,}\.[0-9A-Za-z_\-]{10,}\.[0-9A-Za-z_\-]{10,}"),
+        re.compile(
+            _JWT_START + r"eyJ[0-9A-Za-z_\-]{10,}\.[0-9A-Za-z_\-]{10,}\.[0-9A-Za-z_\-]{10,}"
+        ),
     ),
 }
 # A guess, not a known format: `password = <value>` where the value does not look like code.
@@ -160,14 +171,20 @@ def scan(text: str) -> dict[str, Any]:
     for match in _ASSIGNMENT.finditer(text):
         value = match.group(2)
         letters, digits = any(c.isalpha() for c in value), any(c.isdigit() for c in value)
-        if not (letters and digits) or value[0] in "/\.~":
+        if not (letters and digits) or value[0] in "/\\.~":
             continue  # a word, a number, a path or a placeholder: not a credential
         counts[_PASSWORD] += 1
         category[_PASSWORD] = "secret"
         spans.append(match.span(2))
-    spans.sort()
+    # Merged once and searched by bisection: the old any(...) over every span for every token was
+    # quadratic (security review 2026-11-06). A token is "already counted" if its start lies in a
+    # span [a, b) or its end in (a, b], exactly as before.
+    covered = _merge_spans([(a, b, "") for a, b in spans])
+    starts = [a for a, _, _ in covered]
     for match in _TOKEN.finditer(text):
-        if any(a <= match.start() < b or a < match.end() <= b for a, b in spans):
+        i = bisect_right(starts, match.start()) - 1
+        j = bisect_left(starts, match.end()) - 1
+        if (i >= 0 and match.start() < covered[i][1]) or (j >= 0 and match.end() <= covered[j][1]):
             continue  # already counted as a known format
         token = match.group()
         if any(c.isdigit() for c in token) and _entropy(token) > ENTROPY_FLOOR:
@@ -254,45 +271,115 @@ def tool_text(tool: str, tool_input: dict[str, Any]) -> str | None:
 
 
 # --- redaction for the output guard (v0.7e F1, ADR-0027) ------------------------------------
-# A whole PEM block: up to its END line, or to the end of the text when it has none.
+# A private key block, bounded so that a text full of unterminated headers stays linear: up to its
+# END line within PEM_MAX characters; else the header plus the base64 or "Header: value" lines
+# right after it (a prose line after a stray header is kept, and a grep hit later in the output
+# stays visible).
+PEM_MAX = 8000
 _PEM_BLOCK = re.compile(
-    r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----[\s\S]*?"
-    r"(-----END [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----|\Z)"
+    r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----"
+    r"(?:[\s\S]{0," + str(PEM_MAX) + r"}?-----END [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----"
+    r"|(?:\r?\n(?:[A-Za-z0-9+/=]{20,}|[A-Za-z][A-Za-z-]*: [^\r\n]{0,100}))*)"
 )
 _REDACT: tuple[tuple[str, re.Pattern[str]], ...] = (("private_key", _PEM_BLOCK),) + tuple(
     (kind, pattern) for kind, (_, pattern) in _PATTERNS.items() if kind != "private_key"
 )
 _MAX_DEPTH = 50
+UNSCANNABLE = "[REDACTED:unscannable]"
 
 
 def _tag(kind: str, value: str) -> str:
-    """[REDACTED:<kind>:<sha256[:8]>]: a fingerprint (CLAUDE.md rule 1), never the value."""
-    return f"[REDACTED:{kind}:{hashlib.sha256(value.encode('utf-8')).hexdigest()[:8]}]"
+    """[REDACTED:<kind>:<sha256[:8]>]: a fingerprint (CLAUDE.md rule 1), never the value.
+    surrogatepass: a lone surrogate (valid in JSON) must not make the tag, and with it the whole
+    redaction, fail."""
+    digest = hashlib.sha256(value.encode("utf-8", "surrogatepass")).hexdigest()
+    return f"[REDACTED:{kind}:{digest[:8]}]"
 
 
-def _redact_text(text: str, counts: Counter[str], unredacted: Counter[str]) -> str:
-    for kind, pattern in _REDACT:
+def _merge_spans(spans: list[tuple[int, int, str]]) -> list[tuple[int, int, str]]:
+    """Join overlapping spans (touching ones stay apart); a joined span takes the kind of its
+    longest member. Redacting each match in turn would cut the middle out of a key that sits
+    inside a longer match and leave the ends visible."""
+    merged: list[list[Any]] = []
+    for start, end, kind in sorted(spans, key=lambda s: (s[0], -s[1])):
+        if merged and start < merged[-1][1]:
+            last = merged[-1]
+            if end - start > last[3]:
+                last[2], last[3] = kind, end - start
+            last[1] = max(last[1], end)
+        else:
+            merged.append([start, end, kind, end - start])
+    return [(a, b, kind) for a, b, kind, _ in merged]
 
-        def _sub(match: re.Match[str], kind: str = kind) -> str:
-            counts[kind] += 1
-            return _tag(kind, match.group())
 
-        text = pattern.sub(_sub, text)
-    # What only the normalised scan sees (zero-width characters, look-alikes, %-encoding) cannot
-    # be cut out of the original text safely: report it so the guard treats the output as tainted.
-    for kind, n in _known(scan(text)["counts"]).items():
-        unredacted[kind] += n
-    return text
+def _redact_text(text: str) -> tuple[str, Counter[str], Counter[str]]:
+    """(redacted text, kinds redacted, kinds seen only after normalising). No matched text."""
+    spans = [
+        (m.start(), m.end(), kind) for kind, pattern in _REDACT for m in pattern.finditer(text)
+    ]
+    counts: Counter[str] = Counter()
+    pieces: list[str] = []
+    last = 0
+    for start, end, kind in _merge_spans(spans):
+        pieces.append(text[last:start])
+        # The newlines inside the block stay, so line numbers in the output do not shift.
+        pieces.append(_tag(kind, text[start:end]) + "\n" * text.count("\n", start, end))
+        counts[kind] += 1
+        last = end
+    pieces.append(text[last:])
+    out = "".join(pieces)
+    # What only the normalised scan sees (zero-width characters, look-alikes) cannot be cut out of
+    # the original text safely: report it so the guard treats the output as tainted.
+    unredacted = Counter(_known(scan(out)["counts"]))
+    return out, counts, unredacted
+
+
+def _deep_text(value: Any) -> str:
+    """Every string in a subtree, gathered without recursion (it is deeper than we recurse)."""
+    out: list[str] = []
+    stack = [value]
+    size = 0
+    while stack and size < MAX_TEXT:
+        item = stack.pop()
+        if isinstance(item, str):
+            out.append(item)
+            size += len(item)
+        elif isinstance(item, dict):
+            stack.extend(item.keys())
+            stack.extend(item.values())
+        elif isinstance(item, list | tuple):
+            stack.extend(item)
+    return "\n".join(out)
+
+
+def _redact_leaf(text: str, state: dict[str, Any]) -> str:
+    try:
+        out, counts, unredacted = _redact_text(text)
+    except Exception:  # noqa: BLE001 - a leaf that cannot be checked is replaced, never passed on
+        state["counts"]["unscannable"] += 1
+        return UNSCANNABLE
+    state["counts"].update(counts)
+    state["unredacted"].update(unredacted)
+    return out
 
 
 def _redact_value(value: Any, state: dict[str, Any], depth: int) -> Any:
     if depth > _MAX_DEPTH:
         state["partial"] = True
+        try:  # not redacted, but a credential down there still marks the session
+            state["unredacted"].update(_known(scan(_deep_text(value))["counts"]))
+        except Exception:  # noqa: BLE001
+            state["unredacted"]["unscannable"] += 1
         return value
     if isinstance(value, str):
-        return _redact_text(value, state["counts"], state["unredacted"])
+        return _redact_leaf(value, state)
     if isinstance(value, dict):
-        return {key: _redact_value(item, state, depth + 1) for key, item in value.items()}
+        return {
+            (_redact_leaf(key, state) if isinstance(key, str) else key): _redact_value(
+                item, state, depth + 1
+            )
+            for key, item in value.items()
+        }
     if isinstance(value, list | tuple):
         return type(value)(_redact_value(item, state, depth + 1) for item in value)
     return value
@@ -300,14 +387,15 @@ def _redact_value(value: Any, state: dict[str, Any], depth: int) -> Any:
 
 def redact(value: Any) -> tuple[Any, dict[str, Any]]:
     """A copy of `value` (any JSON value: a tool's output) with each credential in a known format
-    and each private key replaced by `[REDACTED:<kind>:<sha256[:8]>]`. Only string leaves change,
-    so the output keeps its shape. Guesses (high-entropy tokens, `password = ...`), PII and
-    addresses are left alone: they match ordinary code, and a redacted read the agent writes back
-    would damage it.
+    and each private key replaced by `[REDACTED:<kind>:<sha256[:8]>]` (dict keys too). Only string
+    leaves change, so the output keeps its shape, and the newlines of a replaced block stay, so
+    line numbers do not shift. Guesses (high-entropy tokens, `password = ...`), PII and addresses
+    are left alone: they match ordinary code, and a redacted read the agent writes back would
+    damage it. A leaf that cannot be checked is replaced by `[REDACTED:unscannable]`.
 
     Returns (copy, info): info = {"counts": {kind: n redacted}, "redacted": total,
-    "unredacted": {kind: n seen only after normalising}, "partial": nested too deeply}.
-    No matched text is returned."""
+    "unredacted": {kind: n seen but not cut out: only after normalising, or deeper than we
+    recurse}, "partial": nested too deeply}. No matched text is returned."""
     state: dict[str, Any] = {"counts": Counter(), "unredacted": Counter(), "partial": False}
     out = _redact_value(value, state, 0)
     counts: Counter[str] = state["counts"]

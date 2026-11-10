@@ -83,6 +83,10 @@ CHECKS = {
     "D3": "manifest has no lockfile",
     "D4": "install-time scripts can run code when dependencies are installed",
     "D5": "dependency comes from a URL, a git repository or a custom package index",
+    "M1": "MCP server is launched without a fixed version (each start can fetch different code)",
+    "M2": "remote MCP server is reached over plain http",
+    "M3": "MCP server launch depends on ${VAR} expansion (the pin cannot see the value)",
+    "M0": "the MCP configuration (.mcp.json) is not readable JSON",
 }
 
 _SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -289,6 +293,28 @@ def check_dependencies(repo: Path) -> list[Finding]:
     return out
 
 
+def check_mcp(repo: Path) -> list[Finding]:
+    """M1 and M2 over the project's `.mcp.json` (ADR-0028). Server names only, never arguments,
+    which can hold credentials. An unreadable file is a finding, not a silent pass."""
+    from sentinel import mcppin
+
+    try:
+        found = mcppin.launch_findings(str(repo))
+    except ValueError:
+        return [Finding("M0", "low", mcppin.MCP_CONFIG, CHECKS["M0"])]
+    # The server name goes into the path: event ids are per check and path, so two servers in one
+    # file stay two events, and "M1:.mcp.json#docs" can be ignored on its own.
+    return [
+        Finding(
+            check,
+            "low" if check == "M3" else "medium",
+            f"{mcppin.MCP_CONFIG}#{name}",
+            f"{CHECKS[check]}: '{name}'",
+        )  # fmt: skip
+        for check, name in found
+    ]
+
+
 def check_workflows_zizmor(repo: Path, existing: list[Finding]) -> list[Finding]:
     """zizmor's YAML-aware audits (ADR-0029), when zizmor is on PATH. Not installed: nothing (the
     regex checks W1-W6 still run; `doctor` says so). A failed run is reported, never silent."""
@@ -319,6 +345,7 @@ def scan_repo(
         + workflows
         + (check_workflows_zizmor(repo, workflows) if use_zizmor else [])
         + check_dependencies(repo)
+        + check_mcp(repo)
     )
     return [f for f in found if not _ignored(f, ignore)]
 

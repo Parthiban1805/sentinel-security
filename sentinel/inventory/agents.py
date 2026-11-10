@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from sentinel import mcppin
 from sentinel.events.schema import format_time
 from sentinel.store.db import Store
 
@@ -22,6 +23,12 @@ MCP_CONFIG = ".mcp.json"
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 _SAFE_COMMAND = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 _TRANSPORTS = frozenset({"stdio", "http", "sse"})
+# Attributes a person sets with `inventory set` (reviewed version and date, pinned tool list,
+# trusted source for the output guard). Rediscovery keeps them.
+_PERSON_SET = ("pinned_version", "reviewed", "tools", "trusted")
+# Cleared with an approval when the launch settings change (the tool list stays: it only narrows).
+_STALE_ON_CHANGE = ("pinned_version", "reviewed", "trusted")
+_PINNING_ENABLED = "mcp_pinning_enabled"
 
 
 def _slug(text: str) -> str:
@@ -84,18 +91,26 @@ def _describe(config: Any) -> dict[str, Any]:
     return facts
 
 
-def _identity(name: str, facts: dict[str, Any]) -> str:
-    """What an approval is tied to: if any of these change, the approval no longer applies."""
+def _identity(name: str, facts: dict[str, Any], pin: str = "") -> str:
+    """What an approval is tied to: if any of these change, the approval no longer applies. With a
+    key, `pin` is the keyed hash of the full launch settings (args, version, URL; ADR-0028)."""
     parts = [name, facts.get("transport", ""), facts.get("host", ""), facts.get("command", "")]
+    if pin:
+        parts.append(pin)
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
-def discover_mcp(store: Store, workspace: Path, now: datetime) -> tuple[list[str], int]:
+def discover_mcp(
+    store: Store, workspace: Path, now: datetime, key: bytes | None = None
+) -> tuple[list[str], int]:
     """Register servers from `<workspace>/.mcp.json`. Returns (asset ids, names skipped as unsafe).
 
     Owner and approval set by a person are kept, but an approval is CLEARED (and audited) when the
-    server's transport, host or command changes: approving `github` must not approve whatever
-    `github` is later pointed at. A new server starts unowned and unapproved."""
+    server's transport, host or command changes, and, given the fingerprint `key`, when ANY launch
+    setting changes (args, package version, URL, env names; ADR-0028): approving `github` must not
+    approve whatever `github` is later pointed at. An approval made before pinning existed is kept
+    once and pinned to the current settings (audited as `mcp_pin_added`). A new server starts
+    unowned and unapproved. Only the keyed hash of the settings is stored."""
     path = workspace / MCP_CONFIG
     if not path.is_file():
         return [], 0
@@ -107,6 +122,11 @@ def discover_mcp(store: Store, workspace: Path, now: datetime) -> tuple[list[str
     if not isinstance(servers, dict):
         return [], 0
     known = {a["asset_id"]: a for a in store.assets()}
+    # The one-time migration (approvals from before pinning keep working) is closed once a keyed
+    # run has happened, so an approval that appears later cannot be pinned on the old terms.
+    migration_open = key is not None and not any(
+        entry.get("action") == _PINNING_ENABLED for entry in store.audit()
+    )
     ids: list[str] = []
     skipped = 0
     for name, config in servers.items():
@@ -116,15 +136,37 @@ def discover_mcp(store: Store, workspace: Path, now: datetime) -> tuple[list[str
         asset_id = mcp_asset_id(name)
         existing = known.get(asset_id)
         facts = _describe(config)
-        identity = _identity(name, facts)
+        pin = mcppin.config_hash(config, key) if key else ""
         approved = bool(_keep(existing, "approved", False))
-        before = ((existing or {}).get("attributes") or {}).get("identity")
+        old_attrs = (existing or {}).get("attributes") or {}
+        before = old_attrs.get("identity")
+        if not pin and old_attrs.get("config_hash"):
+            # Pinned earlier, but no key now: the launch settings cannot be compared, so the old pin
+            # stands; a change of transport, host or command still clears the approval.
+            pin = str(old_attrs["config_hash"])
+        identity = _identity(name, facts, pin)
         if approved and before != identity:
-            approved = False
-            store.add_audit(
-                format_time(now),
-                {"action": "mcp_approval_cleared", "asset": asset_id, "reason": "config changed"},
-            )
+            legacy = not old_attrs.get("config_hash") and before == _identity(name, facts)
+            if pin and legacy and migration_open:
+                store.add_audit(  # approved before pinning existed: pin what was approved
+                    format_time(now),
+                    {"action": "mcp_pin_added", "asset": asset_id},
+                )
+            else:
+                approved = False
+                store.add_audit(
+                    format_time(now),
+                    {"action": "mcp_approval_cleared", "asset": asset_id,
+                     "reason": "config changed"},
+                )  # fmt: skip
+                # What a person reviewed no longer describes this server: re-approval must state
+                # the version again, and "trusted" must be granted again.
+                old_attrs = {k: v for k, v in old_attrs.items() if k not in _STALE_ON_CHANGE}
+        if pin:
+            facts["config_hash"] = pin
+        for field in _PERSON_SET:  # set by a person; rediscovery used to drop them
+            if old_attrs.get(field):
+                facts[field] = old_attrs[field]
         store.upsert_asset(
             {
                 "asset_id": asset_id,
@@ -145,6 +187,8 @@ def discover_mcp(store: Store, workspace: Path, now: datetime) -> tuple[list[str
             }
         )
         ids.append(asset_id)
+    if migration_open:
+        store.add_audit(format_time(now), {"action": _PINNING_ENABLED})
     return ids, skipped
 
 

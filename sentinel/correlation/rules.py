@@ -573,24 +573,58 @@ def _guard_rule(event: Event) -> str:
     return rule if rule in _GUARD_RULES else ""
 
 
+def _refused_leaving_call(event: Event) -> bool:
+    """The gateway refused a WebFetch, WebSearch or MCP call (FW-01, FW-02, MCP-02, ...)."""
+    attrs = attrs_of(event)
+    tool = str(attrs.get("tool", ""))
+    return (
+        event.get("source") == "agent_hook"
+        and event.get("event_type") == "agent_tool_denied"
+        and attrs.get("decision") == "deny"
+        and (tool in ("WebFetch", "WebSearch") or tool.startswith("mcp__"))
+    )
+
+
+def _r13_gates(session_events: list[Event]) -> list[Event]:
+    """TF-01 asks, plus refused data-leaving calls made after the guard had recorded BOTH legs.
+    A deny returns before the trifecta layer, so the log names the firewall rule, not TF-01
+    (security review 2026-11-06). Legs set only by a guard error (OG-99) do not count here."""
+    seen_untrusted = seen_secret = False
+    gates: list[Event] = []
+    for e in session_events:  # in time order
+        rule = _guard_rule(e)
+        if rule in _SECRET_SEEN:
+            seen_secret = True
+        elif rule in _UNTRUSTED_READ:
+            seen_untrusted = True
+        elif is_trifecta_gate(e) or (seen_untrusted and seen_secret and _refused_leaving_call(e)):
+            gates.append(e)
+    return gates
+
+
 def r13_trifecta_gate(events: list[Event], ctx: Context) -> list[Match]:
-    """R13 (S11, ADR-0027): in one agent session, the gateway asked before a data-leaving call
-    because the session had read untrusted content AND seen a credential (TF-01). One incident per
-    session episode, with the output guard's evidence (OG-01/02/10/11) of that session attached.
+    """R13 (S11, ADR-0027): in one agent session, a data-leaving call was stopped after the session
+    had read untrusted content AND seen a credential: the gateway asked (TF-01), or refused it
+    (a firewall or MCP deny after both legs). One incident per session episode, with the output
+    guard's evidence (OG-01/02/10/11) of that session attached.
 
     The legs are facts the hooks recorded; that the agent was steered is a hypothesis. Whether the
-    person then allowed the call is not recorded, so this rule never says that data left."""
+    person then allowed an asked call is not recorded, so this rule never says that data left."""
     groups: dict[str, list[Event]] = {}
     for e in events:
-        if not (is_trifecta_gate(e) or _guard_rule(e)):
+        if not (is_trifecta_gate(e) or _guard_rule(e) or _refused_leaving_call(e)):
             continue
         # No "@" in the base: closed episodes are looked up by the key text before its first "@".
         session = safe_text(attrs_of(e).get("session", ""), 64) or f"unknown-{e.get('asset_id')}"
         groups.setdefault(_group_key(f"R13:{session}", bool(e.get("is_test"))), []).append(e)
     matches: list[Match] = []
     for base, group in sorted(groups.items()):
-        episode = _episode(base, ordered(group), ctx)
-        gates = [e for e in episode if is_trifecta_gate(e)]
+        full = ordered(group)
+        episode = _episode(base, full, ctx)
+        in_episode = {e["event_id"] for e in episode}
+        # Legs are read from the whole session (they never expire within it); gates and evidence
+        # from the current episode only.
+        gates = [e for e in _r13_gates(full) if e["event_id"] in in_episode]
         if not gates:
             continue
         # Evidence: guard events of the whole session up to the last gate (the legs never expire
@@ -602,10 +636,15 @@ def r13_trifecta_gate(events: list[Event], ctx: Context) -> list[Match]:
         untrusted = sorted({_guard_rule(e) for e in evidence if _guard_rule(e) in _UNTRUSTED_READ})
         failed = sorted({_guard_rule(e) for e in evidence if _guard_rule(e) in _GUARD_FAILED})
         tools = sorted({safe_text(attrs_of(e).get("tool", "?"), 64) for e in gates})
+        asked = sum(1 for e in gates if is_trifecta_gate(e))
+        refused = sorted({safe_text(attrs_of(e).get("rule", "?")) for e in gates
+                          if not is_trifecta_gate(e)})  # fmt: skip
         none = "no event in this episode"
         facts = [
-            f"In agent session {session} the gateway asked before {len(gates)} data-leaving "
-            f"call(s) (TF-01; tools: {', '.join(tools)}) from {gates[0]['time']}.",
+            f"In agent session {session} the gateway stopped {len(gates)} data-leaving call(s) "
+            f"({asked} asked about by TF-01, {len(gates) - asked} refused"
+            + (f" by {', '.join(refused)}" if refused else "")
+            + f"; tools: {', '.join(tools)}) from {gates[0]['time']}.",
             f"Untrusted-content leg set by: {', '.join(untrusted) or none}.",
             # Rule 6: a leg set by a guard error is not an observed credential.
             f"Credential leg set by: {', '.join(secret) or none}"

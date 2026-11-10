@@ -104,7 +104,9 @@ def test_code_is_not_a_password(line: str) -> None:
 
 
 def test_a_real_looking_assignment_asks_but_never_blocks() -> None:
-    line = "password = " + rand(14)
+    # Letters AND digits, as the detector requires: rand(14) alone has no digit about 8% of the time,
+    # which made this test flaky.
+    line = "password = " + rand(12) + "q7"
     assert fw.decide_prompt(line) is None
     verdict = fw.decide_tool("mcp__x__send", {"body": line})
     assert verdict is not None and verdict[:2] == ("ask", "FW-03")

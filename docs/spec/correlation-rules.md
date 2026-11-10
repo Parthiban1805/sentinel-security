@@ -204,10 +204,13 @@ incidents that are counted in metrics only.
 ### R13: a data-leaving call after untrusted content and a seen credential, in one agent session (S11)
 - **Inputs:** `agent_tool_allowed` from `agent_hook`: the gateway's `ask` with rule `TF-01` (class `trifecta`),
   and the output guard's records `OG-01` (`output_redacted`), `OG-02` (`output_tainted`), `OG-10` and `OG-11`
-  (`taint`). **Join key:** `attributes.session`.
+  (`taint`); and `agent_tool_denied` for WebFetch, WebSearch or an MCP tool. **Join key:** `attributes.session`.
 - **Window:** none. The session's legs never expire within the session, so the gate itself carries the condition:
   the gateway asks only when the session has read untrusted content (U) AND seen a credential (S).
-- **Condition:** at least one `TF-01` in the session episode. `TF-99` (the state could not be read) is not a match.
+- **Condition:** at least one gate in the session episode. A gate is a `TF-01` ask, or a refused data-leaving call
+  (FW-01, FW-02, MCP-02, ...) after the guard recorded both legs (OG-10/11 and OG-01/02) earlier in the session.
+  A deny returns before the trifecta layer, so the log names the firewall rule, not TF-01. Legs from a guard
+  error (OG-99) alone do not make a refusal a gate; `TF-99` (the state could not be read) is not a match.
 - **Output:** ONE incident per session episode (dedup key `R13:<session>@<time of the first TF-01>`). Severity
   floor high, confidence medium (the legs and the attempt are recorded facts). **Facts:** the data-leaving tools,
   how many calls were questioned, which guard rules marked the session; whether the person allowed the call is not

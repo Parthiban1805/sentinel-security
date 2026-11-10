@@ -3,6 +3,34 @@
 Replaces the separate guard hooks with **one gateway hook for every Claude Code tool call**. The owner applies it, because
 `.claude/` is protected from the agent.
 
+## v0.7e update 2: MCP pinning (ADR-0028)
+- **New file:** `_mcppin.py` (a byte-identical copy of `sentinel/mcppin.py`).
+- **`session_log.py`:** at session start it also compares each pinned MCP server with `.mcp.json` and writes
+  `.sentinel/mcp-drift.json`.
+- **Gateway:** an approved server whose launch settings changed, went missing or could not be checked is denied
+  (MCP-04), and so is every pinned server when the drift file is missing or unreadable. With a pinned tool list,
+  a new tool asks first (MCP-05). `mcp-allowlist pin-tools` joins the person-only commands (BG-17).
+- **After applying:** run `uv run sentinel inventory agents` once (existing approvals are pinned, not cleared),
+  start a new conversation, run `uv run pytest -q tests/sentinel/test_mcp_pinning.py`, re-pin the hooks (one new
+  file), and check `uv run sentinel agent mcp-allowlist status`.
+
+## v0.7e update: output guard and trifecta gate (ADR-0027)
+- **New files:** `_taint.py` (a byte-identical copy of `sentinel/sessiontaint.py`) and `output_guard.py`.
+- **New hook:** `settings.merged.json` adds a second `PostToolUse` entry (Read, Bash, Grep, WebFetch, WebSearch,
+  MCP tools) running `output_guard.py`. It replaces a known-format credential or private key in the output with
+  `[REDACTED:<kind>:<sha256[:8]>]` before Claude sees it (OG-01), and marks the session: untrusted content read,
+  credential seen.
+- **Gateway:** a fourth tighten-only layer asks before WebFetch, WebSearch or an MCP call in a session with both
+  marks (TF-01); an unreadable state asks too (TF-99). TF-01 wins a tie with an earlier ask and carries its reason.
+- **State:** marker files in `.sentinel/agent-sessions/` (no content, no raw session id).
+- **After applying:** start a new conversation, run
+  `uv run pytest -q tests/scenarios/test_s11_agent_policy_hooks.py tests/sentinel/test_output_guard.py`, re-pin
+  (`uv run sentinel agentlog pin-hooks --actor <you>`: two new hook files), then the live drill:
+  1. Read a harness-generated canary file: Claude must see `[REDACTED:...]`, not the value.
+  2. Run a WebSearch, then a WebFetch: the TF-01 prompt must appear.
+  3. `uv run sentinel agentlog verify`, then `uv run sentinel search` for rule R13.
+  If step 1 shows the value, Claude Code ignored `updatedToolOutput` for that tool: report it (ADR-0027).
+
 ## v0.7d update 2: context firewall (ADR-0025)
 - **New files:** `_firewall.py` (a byte-identical copy of `sentinel/contextfirewall.py`) and `prompt_guard.py`.
 - **New hook:** `settings.merged.json` adds a `UserPromptSubmit` hook running `prompt_guard.py`. It blocks a prompt

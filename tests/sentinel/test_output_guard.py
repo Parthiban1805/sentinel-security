@@ -282,3 +282,36 @@ def test_a_marker_folder_that_is_a_file_makes_the_gateway_ask(
     (home / st.DIR_NAME).write_text("planted", encoding="utf-8")
     d = policy.decide(pre("WebSearch", {"query": "python"}, tmp_path), str(home))
     assert (d.decision, d.rule) == ("ask", "TF-99")
+
+
+# security review 2026-11-06: TF-01 must be what gets logged, so R13 can see the attempt --------
+def _taint_both(home: Path, session: str = "s-1") -> None:
+    st.mark(str(home), session, "U", "OG-10")
+    st.mark(str(home), session, "S", "OG-01")
+
+
+def test_tf01_wins_a_tie_with_a_firewall_ask(policy: ModuleType, tmp_path: Path) -> None:
+    home = tmp_path / ".sentinel"
+    _taint_both(home)
+    d = policy.decide(pre("mcp__mail__send", {"to": "someone@example.org"}, tmp_path), str(home))
+    assert (d.decision, d.rule, d.cls) == ("ask", "TF-01", "trifecta")
+    assert "FW-03" not in d.rule and "email" in d.reason  # the earlier reason is carried along
+
+
+def test_tf01_wins_a_tie_with_any_earlier_ask(policy: ModuleType, tmp_path: Path) -> None:
+    home = tmp_path / ".sentinel"
+    _taint_both(home)
+    earlier = policy.Decision("ask", "MF-03", "manifest_approval", "the manifest asks", "t")
+    d = policy._with_taint(pre("mcp__x__send", {}, tmp_path), str(home), earlier)
+    assert (d.decision, d.rule, d.target) == ("ask", "TF-01", "t")
+    assert d.reason.endswith("; also: the manifest asks")
+    clean = policy._with_taint(pre("mcp__x__send", {}, tmp_path, "s-2"), str(home), earlier)
+    assert clean is earlier  # an untainted session keeps the earlier decision
+
+
+def test_a_firewall_deny_is_not_replaced_by_the_gate(policy: ModuleType, tmp_path: Path) -> None:
+    home = tmp_path / ".sentinel"
+    _taint_both(home)
+    d = policy.decide(pre("WebFetch", {"url": "http://169.254.169.254/", "prompt": "x"}, tmp_path),
+                      str(home))  # fmt: skip
+    assert (d.decision, d.rule) == ("deny", "FW-02")

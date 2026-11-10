@@ -23,6 +23,7 @@ from sentinel import (
     drills,
     findings,
     hygiene,
+    mcppin,
     onboarding,
     probes,
     runner,
@@ -140,8 +141,10 @@ def cmd_fingerprint(args: argparse.Namespace) -> int:
 def cmd_inventory_agents(args: argparse.Namespace) -> int:
     store, workspace, now = _store(args), Path(args.workspace), _now()
     agent = agent_inventory.register_agent(store, workspace, now)
-    servers, skipped = agent_inventory.discover_mcp(store, workspace, now)
+    servers, skipped = agent_inventory.discover_mcp(store, workspace, now, load_key(_home(args)))
     graph.refresh_agent_edges(store, agent, servers, now)
+    if agentgate.refresh_mcp_allowlist(store, _home(args)):
+        print("gateway MCP allow-list refreshed (pins and cleared approvals)")
     print(f"agent: {agent}")
     print(f"MCP servers from {agent_inventory.MCP_CONFIG}: {len(servers)}")
     for asset_id in servers:
@@ -648,7 +651,9 @@ def cmd_inventory_set(args: argparse.Namespace) -> int:
         attributes=attributes or None,
     )
     if is_mcp:
-        written = agentgate.write_mcp_allowlist(store, _home(args))
+        written = agentgate.write_mcp_allowlist(
+            store, _home(args), workspace=agentgate.drift_workspace(_home(args))
+        )
         print(
             f"gateway MCP allow-list: {len(agentgate.mcp_allowlist(store))} server(s)"
             if written
@@ -944,11 +949,67 @@ def cmd_agent_mcp_allowlist(args: argparse.Namespace) -> int:
             else "MCP allow-list was already off"
         )
         return 0
+    if args.state == "pin-tools":
+        return _pin_mcp_tools(args, home)
     if not path.exists():
         print("MCP allow-list: off (MCP calls are recorded, not blocked)")
-    else:
-        names = sorted(agentgate.mcp_allowlist(_store(args)))
-        print(f"MCP allow-list: ON, approved: {', '.join(names) or 'none (every server blocked)'}")
+        return 0
+    # The file the gateway reads, not the store: they can differ until the next refresh.
+    try:
+        allowed = json.loads(path.read_text(encoding="utf-8"))["servers"]
+        if not isinstance(allowed, dict):
+            raise TypeError("servers is not an object")
+    except (OSError, ValueError, KeyError, TypeError):
+        print("MCP allow-list: ON but UNREADABLE (every MCP server is blocked, MCP-03)")
+        return 1
+    names = sorted(allowed)
+    print(f"MCP allow-list: ON, approved: {', '.join(names) or 'none (every server blocked)'}")
+    drift = mcppin.drift(str(home), str(agentgate.drift_workspace(home)))
+    problems = bool(drift)
+    for name in names:
+        entry = allowed[name] if isinstance(allowed[name], dict) else {}
+        if entry.get("config_hash"):
+            pin = "launch settings pinned"
+        else:
+            pin = "NOT pinned (run: sentinel inventory agents)"
+            problems = True
+        tools = (
+            f"{len(entry['tools'])} tool(s) pinned" if entry.get("tools") else "tools not pinned"
+        )
+        state = drift.get(name) or drift.get(mcppin.ALL)
+        print(f"  {name}: {pin}; {tools}" + (f"; DRIFT: {state} (denied, MCP-04)" if state else ""))
+    return 1 if problems else 0
+
+
+def _pin_mcp_tools(args: argparse.Namespace, home: Path) -> int:
+    """Pin an approved server's tool list (ADR-0028): a tool not on it then asks first (MCP-05)."""
+    _require_human("pinning an MCP server's tool list")
+    if not args.server:
+        raise ValueError("pin-tools needs the server name")
+    if not args.actor.strip():
+        raise ValueError("pin-tools needs --actor (who pins the tools is recorded)")
+    store = _store(args)
+    approved = agentgate.mcp_allowlist(store)
+    if args.server not in approved:
+        raise ValueError(f"MCP server '{args.server}' is not approved")
+    tools = (
+        sorted({t.strip() for t in args.tools.split(",") if t.strip()})
+        if args.tools
+        # Only calls since the current approval was reviewed: earlier ones may have reached a
+        # different server of the same name.
+        else agentgate.pin_mcp_tools(home, args.server, since=approved[args.server]["reviewed"])
+    )
+    if not tools:
+        raise ValueError("no tools given (--tools) and none seen in the decision log yet")
+    inventory.update_asset(
+        store,
+        agent_inventory.mcp_asset_id(args.server),
+        actor=args.actor,
+        now=_now(),
+        attributes={"tools": ",".join(tools)},
+    )
+    agentgate.write_mcp_allowlist(store, home, workspace=agentgate.drift_workspace(home))
+    print(f"{args.server}: {len(tools)} tool(s) pinned: {', '.join(tools)}")
     return 0
 
 
@@ -1507,8 +1568,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = add(agt, "sessions", cmd_agent_sessions, help="advisory risk per agent session (ADR-0020)")
     p.add_argument("--json", action="store_true")
     p.add_argument("--include-test", action="store_true", help="include simulated sessions")
-    p = add(agt, "mcp-allowlist", cmd_agent_mcp_allowlist, help="MCP allow-list status or off")
-    p.add_argument("state", choices=["status", "off"])
+    p = add(agt, "mcp-allowlist", cmd_agent_mcp_allowlist,
+            help="MCP allow-list status, off, or pin-tools <server> (ADR-0028)")  # fmt: skip
+    p.add_argument("state", choices=["status", "off", "pin-tools"])
+    p.add_argument("server", nargs="?", help="pin-tools: the approved server")
+    p.add_argument("--tools", help="pin-tools: comma-separated names (default: seen in the log)")
+    p.add_argument("--actor", default="", help="who pins the tools (recorded)")
     p = add(agt, "manifest", cmd_agent_manifest, help="agent permission manifest (ADR-0024)")
     p.add_argument("action", choices=["check", "apply", "status", "off"])
     p.add_argument("--file", help="manifest TOML (default: policies/agent-manifest.toml)")
