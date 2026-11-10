@@ -37,7 +37,15 @@ def _home():
 
 def main():
     try:
-        data = json.load(sys.stdin)
+        # Raw bytes as UTF-8: `python -I` ignores PYTHONUTF8, and the console code page must not
+        # decide how a tool call is read.
+        data = json.loads(sys.stdin.buffer.read().decode("utf-8", errors="replace"))
+    except RecursionError:
+        # Valid but very deeply nested input (an agent can produce it): fail CLOSED. Exit 1 would
+        # be a non-blocking error and let the call through (found in the v0.7d review).
+        print("SECURITY_POLICY: blocked (GW-98, the tool input is nested too deeply to check). "
+              "Do not retry with a variant.", file=sys.stderr)  # fmt: skip
+        return 2
     except (json.JSONDecodeError, ValueError):
         return 0
     if not isinstance(data, dict):

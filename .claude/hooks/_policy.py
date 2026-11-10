@@ -110,11 +110,33 @@ BASH_RULES = [
      "runs a container command; the sandbox is the reviewed way to run code in Docker"),
     # Every human-only Sentinel action. The CLI also checks for a terminal, but a new console
     # (start, Start-Process) has one, so the agent must not run these at all.
+    # Options may come before the action (`mcp-allowlist --actor x off`), so the action is matched
+    # anywhere later in the same command segment (security review 2026-11-10).
     ("BG-17", "gateway_control",
-     r"\bkill-switch\s+off\b|\bmanifest\s+(off|apply)\b|\bmcp-allowlist\s+off\b"
-     r"|\bsandbox\s+strict\s+off\b|\bpin-hooks\b|\bcreds\s+set\b|\binventory\s+set\b"
-     r"|\bagentlog\s+archive\b", "deny",
+     r"\bkill-switch\b" + _SEG_END + r"\boff\b"
+     r"|\bmanifest\b" + _SEG_END + r"\b(off|apply)\b"
+     r"|\bmcp-allowlist\b" + _SEG_END + r"\b(off|pin-tools)\b"
+     r"|\bsandbox\b" + _SEG_END + r"\bstrict\b" + _SEG_END + r"\boff\b"
+     r"|\bpin-hooks\b|\bcreds\b" + _SEG_END + r"\bset\b|\binventory\b" + _SEG_END + r"\b(set|import)\b"
+     r"|\bagentlog\b" + _SEG_END + r"\barchive\b", "deny",
      "this Sentinel action is a person's decision; ask the user to run it in their own terminal"),
+    # The hooks run only from Claude Code: re-running session_log.py by hand could rewrite the MCP
+    # launch check mid-session (ADR-0028).
+    # Matches running a hook file (live, or the patch copy, which acts on the same state folder),
+    # not reading it or a test file such as test_output_guard.py.
+    ("BG-28", "hook_run",
+     r"\b(python[\d.]*|pythonw|py|uv)(\.exe)?\b" + _SEG_END
+     + r"(\.claude[\\/]+hooks[\\/]+[\w.-]+\.py\b|(^|[\s\"'\\/=])(bash_guard|prompt_guard|"
+     r"output_guard|protect_sensitive_files|scan_written_file|session_log|mcp_log|gateway|"
+     r"_mcppin|_taint|_policy|_firewall|_manifest|_decision_log)\.py\b)", "deny",
+     "the guard hooks run only from Claude Code"),
+    # A local-scope MCP server overrides the project's .mcp.json entry of the same name, outside
+    # Sentinel's view (~/.claude.json). Adding or changing servers is a person's decision.
+    ("BG-29", "agent_config",
+     r"\bclaude\b" + _SEG_END + r"\bmcp\b" + _SEG_END
+     + r"\b(add|add-json|add-from-claude-desktop|remove|reset-project-choices)\b"
+     r"|\bclaude\b" + _SEG_END + r"\bconfig\b" + _SEG_END + r"\b(set|add|remove)\b", "deny",
+     "adding or changing MCP servers or Claude Code settings is a person's decision"),
     ("BG-26", "state_dir_access",
      r"\b(cd|pushd|chdir|set-location|sl|push-location)\b" + _SEG_END + _STATE, "deny",
      "Sentinel's state folder is protected; use the sentinel CLI"),
@@ -549,7 +571,7 @@ def mcp_server_of(tool):
     return rest.rsplit("__", 1)[0] if "__" in rest else ""
 
 
-def _mcp(tool, home):
+def _mcp(tool, home, data=None):
     server = mcp_server_of(tool)
     path = os.path.join(home, MCP_ALLOWLIST_NAME)
     if not _present(path):
@@ -562,13 +584,52 @@ def _mcp(tool, home):
     except Exception:  # noqa: BLE001 - an unreadable allow-list must not open the door
         return Decision("deny", "MCP-03", "mcp_tool", "the MCP allow-list cannot be read", "")
     if server and server in servers:
-        return Decision("allow_mcp", "MCP-01", "mcp_tool", "", "")
+        return _mcp_pinned(tool, server, servers[server], home, data or {})
     return Decision(
         "deny", "MCP-02", "mcp_tool",
         "MCP server '%s' is not approved (a person runs: sentinel inventory set mcp-<name> "
         "--approve --owner ... --pinned-version ...)" % server,
         "",
     )  # fmt: skip
+
+
+MCP_DRIFT_NAME = "mcp-drift.json"
+
+
+def _mcp_pinned(tool, server, entry, home, data):
+    """An approved server (ADR-0028). With a pinned launch hash: a server whose `.mcp.json`
+    settings changed, went missing or could not be checked at session start is denied (MCP-04),
+    and so is every pinned server when the drift file is absent, unreadable, or bound to another
+    session or workspace (fail closed). With a pinned tool list: a tool not on it asks first
+    (MCP-05), the visible sign of a rug pull."""
+    if not isinstance(entry, dict):
+        return Decision("allow_mcp", "MCP-01", "mcp_tool", "", "")
+    if entry.get("config_hash"):
+        try:
+            import _mcppin
+
+            reason = _mcppin.check(home, server, str(data.get("session_id") or ""),
+                                   os.environ.get("CLAUDE_PROJECT_DIR", ""))  # fmt: skip
+        except Exception:  # noqa: BLE001 - not checked this session: do not trust the pin
+            reason = "not checked"
+        if reason:
+            return Decision(
+                "deny", "MCP-04", "mcp_drift",
+                "MCP server '%s' does not match its approved launch settings (%s); a person "
+                "reviews it and runs: sentinel inventory agents, then sentinel inventory set "
+                "mcp-<name> --approve ..." % (server, reason),
+                "",
+            )  # fmt: skip
+    tools = entry.get("tools")
+    name = tool.rsplit("__", 1)[-1]
+    if isinstance(tools, list) and tools and name not in tools:
+        return Decision(
+            "ask", "MCP-05", "mcp_new_tool",
+            "MCP server '%s' offers a tool that was not there when it was pinned (%s): check it "
+            "before allowing it" % (server, name[:64]),
+            "",
+        )  # fmt: skip
+    return Decision("allow_mcp", "MCP-01", "mcp_tool", "", "")
 
 
 MANIFEST_NAME = "agent-manifest.json"
@@ -578,10 +639,75 @@ _RANK = {"allow": 0, "allow_mcp": 0, "ask": 1, "deny": 2}
 def decide(data, home):
     """The decision for one hook payload (dict). Never raises: any internal error denies.
 
-    The built-in rules decide first; the agent manifest (ADR-0024) can then only tighten that
-    decision (allow -> ask or deny, ask -> deny), never loosen it."""
+    Four layers, each of which can only tighten (allow -> ask or deny, ask -> deny): the
+    built-in rules, the agent manifest (ADR-0024), the context firewall (ADR-0025), the
+    session trifecta gate (ADR-0027)."""
     base = _base_decide(data, home)
-    if base.decision == "deny" or not _present(os.path.join(home, MANIFEST_NAME)):
+    if base.decision == "deny":
+        return base
+    after = _with_manifest(data, home, base)
+    if after.decision == "deny":
+        return after
+    after = _with_firewall(data, after)
+    if after.decision == "deny":
+        return after
+    return _with_taint(data, home, after)
+
+
+def _tighter(current, verdict):
+    if verdict is None or _RANK[verdict[0]] <= _RANK.get(current.decision, 0):
+        return current
+    return Decision(verdict[0], verdict[1], verdict[2], verdict[3], current.target)
+
+
+def _with_firewall(data, current):
+    """Data leaving the machine through WebFetch, WebSearch or an MCP tool (ADR-0025). For those
+    tools an error denies (fail closed); other tools are not affected."""
+    tool = str(data.get("tool_name") or "")
+    if tool not in ("WebFetch", "WebSearch") and not tool.startswith("mcp__"):
+        return current
+    try:
+        import _firewall
+
+        tool_input = data.get("tool_input") if isinstance(data.get("tool_input"), dict) else {}
+        return _tighter(current, _firewall.decide_tool(tool, tool_input))
+    except Exception:  # noqa: BLE001 - fail closed for data that would leave the machine
+        return Decision("deny", "FW-99", "firewall_error",
+                        "the context firewall could not check this call", "")  # fmt: skip
+
+
+def _leaves_machine(tool):
+    return tool in ("WebFetch", "WebSearch") or tool.startswith("mcp__")
+
+
+def _with_taint(data, home, current):
+    """The trifecta gate (ADR-0027): a data-leaving call in a session that has read untrusted
+    content AND seen private data asks first (TF-01). The output guard sets the two legs. A state
+    that cannot be read asks too (TF-99): this layer asks, it never opens or hard-closes.
+
+    TF-01 wins a tie with an earlier ask (FW-03, a manifest ask) and carries its reason along: the
+    log keeps one rule per call, and rule R13 must see the attempt (security review 2026-11-06).
+    A deny never reaches this layer."""
+    tool = str(data.get("tool_name") or "")
+    if not _leaves_machine(tool):
+        return current
+    try:
+        import _taint
+
+        if not _taint.tainted(home, str(data.get("session_id") or "")):
+            return current
+    except Exception:  # noqa: BLE001
+        return _tighter(current, ("ask", "TF-99", "trifecta_error",
+                                  "Sentinel could not check this session's taint state"))  # fmt: skip
+    reason = ("this session has read untrusted content and seen a credential; this %s call could "
+              "send it out. Check what it sends before allowing it" % tool)  # fmt: skip
+    if current.decision == "ask" and current.reason:
+        reason += "; also: " + current.reason
+    return Decision("ask", "TF-01", "trifecta", reason, current.target)
+
+
+def _with_manifest(data, home, base):
+    if not _present(os.path.join(home, MANIFEST_NAME)):
         return base
     tool = str(data.get("tool_name") or "")
     try:
@@ -601,9 +727,7 @@ def decide(data, home):
     except Exception:  # noqa: BLE001 - fail closed
         return Decision("deny", "MF-99", "manifest_error",
                         "the agent manifest could not be evaluated", "")  # fmt: skip
-    if extra is None or _RANK[extra[0]] <= _RANK.get(base.decision, 0):
-        return base
-    return Decision(extra[0], extra[1], extra[2], extra[3], base.target)
+    return _tighter(base, extra)
 
 
 def _base_decide(data, home):
@@ -623,7 +747,7 @@ def _base_decide(data, home):
                 "",
             )  # fmt: skip
         if tool.startswith("mcp__"):
-            return _mcp(tool, home)
+            return _mcp(tool, home, data)
         if tool in FILE_TOOLS:
             return _file(tool, tool_input, cwd)
         command = tool_input.get("command")
