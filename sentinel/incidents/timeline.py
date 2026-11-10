@@ -76,6 +76,11 @@ ALTERNATIVES: dict[str, tuple[str, ...]] = {
         "A person ran legitimate commands that the keyword guard matched (keyword false positive).",
         "The two attempts were unrelated tasks that happened close together.",
     ),
+    "R13": (
+        "Legitimate research after reading output that happened to contain a key.",
+        "A trusted source that is not marked trusted in the MCP allow-list.",
+        "The output guard failed (OG-99) and marked the session as a precaution.",
+    ),
 }
 SECTIONS = (
     "confirmed",

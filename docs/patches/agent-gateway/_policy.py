@@ -578,15 +578,19 @@ _RANK = {"allow": 0, "allow_mcp": 0, "ask": 1, "deny": 2}
 def decide(data, home):
     """The decision for one hook payload (dict). Never raises: any internal error denies.
 
-    Three layers, each of which can only tighten (allow -> ask or deny, ask -> deny): the
-    built-in rules, the agent manifest (ADR-0024), the context firewall (ADR-0025)."""
+    Four layers, each of which can only tighten (allow -> ask or deny, ask -> deny): the
+    built-in rules, the agent manifest (ADR-0024), the context firewall (ADR-0025), the
+    session trifecta gate (ADR-0027)."""
     base = _base_decide(data, home)
     if base.decision == "deny":
         return base
     after = _with_manifest(data, home, base)
     if after.decision == "deny":
         return after
-    return _with_firewall(data, after)
+    after = _with_firewall(data, after)
+    if after.decision == "deny":
+        return after
+    return _with_taint(data, home, after)
 
 
 def _tighter(current, verdict):
@@ -609,6 +613,31 @@ def _with_firewall(data, current):
     except Exception:  # noqa: BLE001 - fail closed for data that would leave the machine
         return Decision("deny", "FW-99", "firewall_error",
                         "the context firewall could not check this call", "")  # fmt: skip
+
+
+def _leaves_machine(tool):
+    return tool in ("WebFetch", "WebSearch") or tool.startswith("mcp__")
+
+
+def _with_taint(data, home, current):
+    """The trifecta gate (ADR-0027): a data-leaving call in a session that has read untrusted
+    content AND seen private data asks first (TF-01). The output guard sets the two legs. A state
+    that cannot be read asks too (TF-99): this layer asks, it never opens or hard-closes."""
+    tool = str(data.get("tool_name") or "")
+    if not _leaves_machine(tool):
+        return current
+    try:
+        import _taint
+
+        if not _taint.tainted(home, str(data.get("session_id") or "")):
+            return current
+        verdict = ("ask", "TF-01", "trifecta",
+                   "this session has read untrusted content and seen a credential; this %s call "
+                   "could send it out. Check what it sends before allowing it" % tool)  # fmt: skip
+    except Exception:  # noqa: BLE001
+        verdict = ("ask", "TF-99", "trifecta_error",
+                   "Sentinel could not check this session's taint state")  # fmt: skip
+    return _tighter(current, verdict)
 
 
 def _with_manifest(data, home, base):

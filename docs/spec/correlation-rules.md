@@ -199,6 +199,30 @@ incidents that are counted in metrics only.
   (slow-walking, splitting across sessions, unlisted classes, unlogged allowed calls, same-second pairs) are listed
   in ADR-0020. The score has no time limit on its points.
 
+## Implemented in v0.7e item F1 (output guard and trifecta gate; tests in `tests/sentinel/test_r13.py`, ADR-0027)
+
+### R13: a data-leaving call after untrusted content and a seen credential, in one agent session (S11)
+- **Inputs:** `agent_tool_allowed` from `agent_hook`: the gateway's `ask` with rule `TF-01` (class `trifecta`),
+  and the output guard's records `OG-01` (`output_redacted`), `OG-02` (`output_tainted`), `OG-10` and `OG-11`
+  (`taint`). **Join key:** `attributes.session`.
+- **Window:** none. The session's legs never expire within the session, so the gate itself carries the condition:
+  the gateway asks only when the session has read untrusted content (U) AND seen a credential (S).
+- **Condition:** at least one `TF-01` in the session episode. `TF-99` (the state could not be read) is not a match.
+- **Output:** ONE incident per session episode (dedup key `R13:<session>@<time of the first TF-01>`). Severity
+  floor high, confidence medium (the legs and the attempt are recorded facts). **Facts:** the data-leaving tools,
+  how many calls were questioned, which guard rules marked the session; whether the person allowed the call is not
+  recorded. **Hypotheses (not proven):** untrusted content steered the agent to send the credential out (indirect
+  prompt injection); equally plausible, legitimate research after output that happened to hold a key.
+- **Not a match:** guard events without a `TF-01`; a `TF-01` in another session; test events are grouped apart; a
+  closed incident never silences a later episode.
+- **Score:** `trifecta` is an outbound class (so R12 can pair it with an earlier sensitive attempt), and a session
+  with a `TF-01` gets +3 once (`POINTS_TRIFECTA`).
+- **Response plan:** review what the session read and what the call would have sent; rotate the seen credential
+  by fingerprint (approval); end the session (approval, optional); verify the hooks and the log chain.
+- **Known gaps:** see ADR-0027. The legs are coarse (per session, not per value as in CaMeL); a trusted MCP server
+  must be marked by a person; PII alone does not set leg S; a credential that the guard did not recognise sets
+  nothing.
+
 ## Implemented in v0.7a (agent gateway; tests in `tests/sentinel/test_gateway.py`, ADR-0016)
 
 ### R9: a decoy touched during an agent session, with no gateway decision for it (S11, S13)

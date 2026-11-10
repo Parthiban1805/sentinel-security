@@ -12,7 +12,20 @@ from sentinel.cli import main
 def test_every_scenario_logic_verified_through_the_real_pipeline() -> None:
     report = coverage.build_report(None, set())
     by_rule = {r["rule"]: r for r in report["scenarios"]}
-    assert set(by_rule) == {"R1", "R2", "R4", "R5b", "R5c", "R6", "R7", "R8", "R10", "R11", "R12"}
+    assert set(by_rule) == {
+        "R1",
+        "R2",
+        "R4",
+        "R5b",
+        "R5c",
+        "R6",
+        "R7",
+        "R8",
+        "R10",
+        "R11",
+        "R12",
+        "R13",
+    }
     assert all(r["logic_verified_simulated"] and r["plan_generated"] for r in by_rule.values())
 
 

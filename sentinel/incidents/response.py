@@ -207,6 +207,36 @@ _PLANS: dict[str, tuple[_Step, ...]] = {
             True,
         ),
     ),
+    "R13": (
+        (
+            "review_session_inputs",
+            "Review what the session read (web pages, search results, MCP output, files with "
+            "injection phrases) and what the questioned call would have sent",
+            "investigate_first",
+            True,
+        ),
+        (
+            "rotate_seen_credential",
+            "Find and rotate the credential the session's output held (the agent saw a "
+            "[REDACTED:kind:fingerprint] tag, or the value itself if it was not redacted, OG-02); "
+            "the transcript may still hold it",
+            "approval_required",
+            True,
+        ),
+        (
+            "end_session",
+            "End the agent session; a new session starts with no taint",
+            "approval_required",
+            False,
+        ),
+        (
+            "verify_agent_hooks",
+            "Installed hooks match the reviewed patch and the decision log chain is intact "
+            "(system-verified)",
+            "investigate_first",
+            True,
+        ),
+    ),
     "R9": (
         (
             "review_agent_session",

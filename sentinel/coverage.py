@@ -152,6 +152,15 @@ SCENARIOS: tuple[Scenario, ...] = (
         "agent hook decision log; only refused or questioned attempts are visible, not data sent",
     ),
     Scenario(
+        "S11",
+        "Agent reads untrusted content and sees a key, then tries to send data out",
+        "R13",
+        lambda: scenarios.trifecta_exfil("5e55105e55105e57", "agent-demo", NOW),
+        ("agentlog",),
+        "needs the v0.7e output guard hook applied; whether the person allowed the call is not "
+        "recorded",
+    ),
+    Scenario(
         "S12",
         "Agent uses an MCP server that is not approved",
         "R5c",

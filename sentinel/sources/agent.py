@@ -24,6 +24,9 @@ from sentinel.sources.base import DeferredState
 from sentinel.store.db import Store
 
 CURSOR_KEY = "agentlog:events"
+# Output guard decisions (ADR-0027) -> True if the event is "low" severity (else "info").
+_OUTPUT_GUARD = {"output_redacted": True, "output_tainted": True, "output_error": True,
+                 "taint_failed": True, "taint": False}  # fmt: skip
 
 
 def parse_mcp_tool(tool: str) -> tuple[str, str]:
@@ -87,7 +90,10 @@ class AgentLogSource(DeferredState):
         # ADR-0016: the gateway records every call. Plain allowed calls become events only for file
         # tools (rule R9 joins decoy touches on their path fingerprint); "ask" always does.
         allowed_file = decision == "allow" and record.get("target_class") == "file_access"
-        if decision not in ("deny", "allow_mcp", "ask") and not allowed_file:
+        # ADR-0027: the output guard's records. The tool already ran, so they are allowed calls
+        # whose output was redacted or marked; rule R13 reads them as evidence.
+        guarded = decision in _OUTPUT_GUARD
+        if decision not in ("deny", "allow_mcp", "ask") and not allowed_file and not guarded:
             return None  # session_start heartbeat, other allowed calls, or an unknown decision
         session = str(record["session"])
         attrs: dict[str, Any] = {
@@ -107,7 +113,7 @@ class AgentLogSource(DeferredState):
             source="agent_hook",
             asset_id=asset_id,
             time=datetime.fromisoformat(str(record["time"]).replace("Z", "+00:00")),
-            severity="low" if decision == "deny" else "info",
+            severity="low" if decision == "deny" or _OUTPUT_GUARD.get(decision) else "info",
             confidence="high",  # the hook's own decision is a fact; what it means is not
             evidence_ref=f"agentlog/{chain_id}/{record['seq']}",
             event_id=f"agentlog:{chain_id}:{record['seq']}",

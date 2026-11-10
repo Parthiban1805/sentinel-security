@@ -243,6 +243,39 @@ def sensitive_then_outbound(session: str, asset_id: str, now: datetime) -> list[
     ]
 
 
+def trifecta_exfil(session: str, asset_id: str, now: datetime) -> list[dict[str, Any]]:
+    """S11 (R13, ADR-0027): the agent reads a web page (untrusted, OG-10), then a command's output
+    holds a key that the output guard redacts (OG-01), then it tries a WebFetch: the gateway asks
+    (TF-01). No denial and no sensitive attempt, so R13 is the one rule that fires."""
+    steps = [
+        ("WebFetch", "taint", "OG-10", "untrusted_input", 0),
+        ("Bash", "output_redacted", "OG-01", "output_secret", 2),
+        ("WebFetch", "ask", "TF-01", "trifecta", 5),
+    ]
+    return [
+        make_event(
+            event_type="agent_tool_allowed",
+            source="agent_hook",
+            asset_id=asset_id,
+            time=now + timedelta(minutes=minutes),
+            severity="info",
+            confidence="high",
+            evidence_ref=f"simulated/agentlog/seq{i}",
+            event_id=f"simulated:r13:{session}:{i}",
+            is_test=True,
+            attributes={
+                "session": session,
+                "tool": tool,
+                "rule": rule,
+                "target_class": cls,
+                "target_fp": "",
+                "decision": decision,
+            },
+        )
+        for i, (tool, decision, rule, cls, minutes) in enumerate(steps)
+    ]
+
+
 def unapproved_mcp(server: str, asset_id: str, now: datetime) -> list[dict[str, Any]]:
     """S12 (R5c): the agent calls a tool of an MCP server that nobody approved."""
     from sentinel.inventory.agents import mcp_asset_id

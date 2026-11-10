@@ -12,6 +12,7 @@ prefixes on card numbers, link-local and metadata addresses in their odd spellin
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import math
 import re
@@ -235,6 +236,14 @@ def _leaves(value: Any, out: list[str], depth: int = 0) -> None:
         out.append(str(value))
 
 
+def text_of(value: Any) -> str:
+    """Every string (and dict key) in a JSON value, one per line: real newlines, not JSON escapes,
+    so word boundaries survive ("README\\nIgnore" must not read as "nIgnore")."""
+    out: list[str] = []
+    _leaves(value, out)
+    return "\n".join(out)
+
+
 def tool_text(tool: str, tool_input: dict[str, Any]) -> str | None:
     """Everything a data-leaving tool call carries, one string per line; None for other tools."""
     if tool not in ("WebFetch", "WebSearch") and not tool.startswith("mcp__"):
@@ -242,6 +251,72 @@ def tool_text(tool: str, tool_input: dict[str, Any]) -> str | None:
     out: list[str] = []
     _leaves(tool_input, out)
     return "\n".join(out)
+
+
+# --- redaction for the output guard (v0.7e F1, ADR-0027) ------------------------------------
+# A whole PEM block: up to its END line, or to the end of the text when it has none.
+_PEM_BLOCK = re.compile(
+    r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----[\s\S]*?"
+    r"(-----END [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----|\Z)"
+)
+_REDACT: tuple[tuple[str, re.Pattern[str]], ...] = (("private_key", _PEM_BLOCK),) + tuple(
+    (kind, pattern) for kind, (_, pattern) in _PATTERNS.items() if kind != "private_key"
+)
+_MAX_DEPTH = 50
+
+
+def _tag(kind: str, value: str) -> str:
+    """[REDACTED:<kind>:<sha256[:8]>]: a fingerprint (CLAUDE.md rule 1), never the value."""
+    return f"[REDACTED:{kind}:{hashlib.sha256(value.encode('utf-8')).hexdigest()[:8]}]"
+
+
+def _redact_text(text: str, counts: Counter[str], unredacted: Counter[str]) -> str:
+    for kind, pattern in _REDACT:
+
+        def _sub(match: re.Match[str], kind: str = kind) -> str:
+            counts[kind] += 1
+            return _tag(kind, match.group())
+
+        text = pattern.sub(_sub, text)
+    # What only the normalised scan sees (zero-width characters, look-alikes, %-encoding) cannot
+    # be cut out of the original text safely: report it so the guard treats the output as tainted.
+    for kind, n in _known(scan(text)["counts"]).items():
+        unredacted[kind] += n
+    return text
+
+
+def _redact_value(value: Any, state: dict[str, Any], depth: int) -> Any:
+    if depth > _MAX_DEPTH:
+        state["partial"] = True
+        return value
+    if isinstance(value, str):
+        return _redact_text(value, state["counts"], state["unredacted"])
+    if isinstance(value, dict):
+        return {key: _redact_value(item, state, depth + 1) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return type(value)(_redact_value(item, state, depth + 1) for item in value)
+    return value
+
+
+def redact(value: Any) -> tuple[Any, dict[str, Any]]:
+    """A copy of `value` (any JSON value: a tool's output) with each credential in a known format
+    and each private key replaced by `[REDACTED:<kind>:<sha256[:8]>]`. Only string leaves change,
+    so the output keeps its shape. Guesses (high-entropy tokens, `password = ...`), PII and
+    addresses are left alone: they match ordinary code, and a redacted read the agent writes back
+    would damage it.
+
+    Returns (copy, info): info = {"counts": {kind: n redacted}, "redacted": total,
+    "unredacted": {kind: n seen only after normalising}, "partial": nested too deeply}.
+    No matched text is returned."""
+    state: dict[str, Any] = {"counts": Counter(), "unredacted": Counter(), "partial": False}
+    out = _redact_value(value, state, 0)
+    counts: Counter[str] = state["counts"]
+    return out, {
+        "counts": dict(sorted(counts.items())),
+        "redacted": sum(counts.values()),
+        "unredacted": dict(sorted(state["unredacted"].items())),
+        "partial": state["partial"],
+    }
 
 
 # --- the decisions the hooks apply (ADR-0025) -----------------------------------------------

@@ -105,6 +105,15 @@
             "command": "python -I \"$CLAUDE_PROJECT_DIR/.claude/hooks/scan_written_file.py\""
           }
         ]
+      },
+      {
+        "matcher": "Read|Bash|Grep|WebFetch|WebSearch|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -I \"$CLAUDE_PROJECT_DIR/.claude/hooks/output_guard.py\""
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [

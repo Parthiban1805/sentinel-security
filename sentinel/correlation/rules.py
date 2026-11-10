@@ -1,4 +1,4 @@
-"""Correlation rules R1-R12 (specs: docs/spec/correlation-rules.md); pure functions over events."""
+"""Correlation rules R1-R13 (specs: docs/spec/correlation-rules.md); pure functions over events."""
 
 from datetime import datetime, timedelta
 from typing import Any
@@ -11,6 +11,7 @@ from sentinel.correlation.session_risk import (
     attempt_kind,
     attrs_of,
     find_sequence,
+    is_trifecta_gate,
     ordered,
     safe_text,
 )
@@ -551,6 +552,93 @@ def r12_sensitive_then_outbound(events: list[Event], ctx: Context) -> list[Match
                 first_time=first["time"],
                 last_time=involved[-1]["time"],
                 is_test=first["is_test"],
+            )
+        )
+    return matches
+
+
+# Output guard (ADR-0027). OG-99 (guard error) sets legs without observing anything; OG-98 means a
+# leg could not be written.
+_GUARD_RULES = frozenset({"OG-01", "OG-02", "OG-10", "OG-11", "OG-98", "OG-99"})
+_SECRET_SEEN = frozenset({"OG-01", "OG-02"})
+_UNTRUSTED_READ = frozenset({"OG-10", "OG-11"})
+_GUARD_FAILED = frozenset({"OG-98", "OG-99"})
+
+
+def _guard_rule(event: Event) -> str:
+    attrs = attrs_of(event)
+    if event.get("source") != "agent_hook" or event.get("event_type") != "agent_tool_allowed":
+        return ""
+    rule = str(attrs.get("rule", ""))
+    return rule if rule in _GUARD_RULES else ""
+
+
+def r13_trifecta_gate(events: list[Event], ctx: Context) -> list[Match]:
+    """R13 (S11, ADR-0027): in one agent session, the gateway asked before a data-leaving call
+    because the session had read untrusted content AND seen a credential (TF-01). One incident per
+    session episode, with the output guard's evidence (OG-01/02/10/11) of that session attached.
+
+    The legs are facts the hooks recorded; that the agent was steered is a hypothesis. Whether the
+    person then allowed the call is not recorded, so this rule never says that data left."""
+    groups: dict[str, list[Event]] = {}
+    for e in events:
+        if not (is_trifecta_gate(e) or _guard_rule(e)):
+            continue
+        # No "@" in the base: closed episodes are looked up by the key text before its first "@".
+        session = safe_text(attrs_of(e).get("session", ""), 64) or f"unknown-{e.get('asset_id')}"
+        groups.setdefault(_group_key(f"R13:{session}", bool(e.get("is_test"))), []).append(e)
+    matches: list[Match] = []
+    for base, group in sorted(groups.items()):
+        episode = _episode(base, ordered(group), ctx)
+        gates = [e for e in episode if is_trifecta_gate(e)]
+        if not gates:
+            continue
+        # Evidence: guard events of the whole session up to the last gate (the legs never expire
+        # within a session), excluding those before an earlier closed episode.
+        evidence = [e for e in episode if _guard_rule(e) and _ts(e) <= _ts(gates[-1])]
+        involved = ordered([*evidence, *gates])
+        session = safe_text(attrs_of(gates[0]).get("session", ""), 64) or "unknown"
+        secret = sorted({_guard_rule(e) for e in evidence if _guard_rule(e) in _SECRET_SEEN})
+        untrusted = sorted({_guard_rule(e) for e in evidence if _guard_rule(e) in _UNTRUSTED_READ})
+        failed = sorted({_guard_rule(e) for e in evidence if _guard_rule(e) in _GUARD_FAILED})
+        tools = sorted({safe_text(attrs_of(e).get("tool", "?"), 64) for e in gates})
+        none = "no event in this episode"
+        facts = [
+            f"In agent session {session} the gateway asked before {len(gates)} data-leaving "
+            f"call(s) (TF-01; tools: {', '.join(tools)}) from {gates[0]['time']}.",
+            f"Untrusted-content leg set by: {', '.join(untrusted) or none}.",
+            # Rule 6: a leg set by a guard error is not an observed credential.
+            f"Credential leg set by: {', '.join(secret) or none}"
+            + ("." if secret else " (no credential confirmed in tool output)."),
+            "Whether the person allowed the call(s) is not recorded.",
+        ]
+        if failed:
+            facts.append(
+                f"The output guard failed in this session ({', '.join(failed)}): a leg may have "
+                "been set as a precaution, not because something was observed."
+            )
+        matches.append(
+            Match(
+                rule_id="R13",
+                key=f"{base}@{gates[0]['time']}",
+                title="Agent tried to send data out after reading untrusted content and seeing "
+                "a credential",
+                severity_floor="high",
+                confidence="medium",
+                facts=tuple(facts),
+                hypotheses=(
+                    "Untrusted content (a web page, a search result, an MCP result or a file with "
+                    "injection phrases) may have steered the agent to send the credential out "
+                    "(indirect prompt injection).",
+                    "Equally plausible until the session is reviewed: legitimate research after "
+                    "reading output that happened to contain a key; the redacted value was never "
+                    "visible to the agent when OG-01 is listed.",
+                ),
+                event_ids=tuple(e["event_id"] for e in involved),
+                asset_id=gates[0]["asset_id"],
+                first_time=involved[0]["time"],
+                last_time=involved[-1]["time"],
+                is_test=bool(gates[0].get("is_test")),
             )
         )
     return matches

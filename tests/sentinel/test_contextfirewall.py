@@ -164,3 +164,84 @@ def test_tool_text_covers_the_data_that_leaves(
 ) -> None:
     assert fw.tool_text(tool, tool_input) == expected
 
+
+# --- redact (v0.7e F1, ADR-0027): what the output guard shows the agent instead -------------
+@pytest.mark.parametrize("kind", list(fakes()))
+def test_redact_replaces_each_known_format_with_a_fingerprint(kind: str) -> None:
+    value = fakes()[kind]
+    out, info = fw.redact(f"config line: {value} end")
+    assert value not in out and f"[REDACTED:{kind}:" in out
+    assert out.startswith("config line: ") and out.endswith(" end")
+    assert info["counts"] == {kind: 1} and info["redacted"] == 1
+    assert value not in json.dumps(info)
+
+
+def test_redact_fingerprint_is_a_sha256_prefix_and_stable() -> None:
+    import hashlib
+
+    value = "ghp_" + rand(36)
+    out, _ = fw.redact(f"{value} and {value}")
+    tag = f"[REDACTED:github_token:{hashlib.sha256(value.encode()).hexdigest()[:8]}]"
+    assert out == f"{tag} and {tag}"
+
+
+def test_redact_keeps_the_shape_of_a_tool_response() -> None:
+    key = fake_google_key()
+    response = {
+        "stdout": f"KEY={key}\nok",
+        "stderr": "",
+        "interrupted": False,
+        "isImage": False,
+        "lines": [1, None, {"text": key}],
+    }
+    out, info = fw.redact(response)
+    assert set(out) == set(response) and out["interrupted"] is False and out["isImage"] is False
+    assert out["lines"][0] == 1 and out["lines"][1] is None
+    assert key not in json.dumps(out) and info["redacted"] == 2
+    assert key in response["stdout"]  # the input is not modified in place
+
+
+def test_redact_removes_a_whole_private_key_block() -> None:
+    label = "RSA " + "PRIVATE KEY"
+    body = rand(64)
+    pem = "-----BEGIN " + label + "-----\n" + body + "\n-----END " + label + "-----"
+    out, info = fw.redact("before\n" + pem + "\nafter")
+    assert body not in out and out.startswith("before\n") and out.endswith("\nafter")
+    assert info["counts"] == {"private_key": 1}
+
+
+def test_redact_an_unterminated_private_key_removes_the_rest() -> None:
+    label = "OPENSSH " + "PRIVATE KEY"
+    body = rand(64)
+    out, _ = fw.redact("x\n-----BEGIN " + label + "-----\n" + body)
+    assert body not in out and out.startswith("x\n[REDACTED:private_key:")
+
+
+def test_redact_leaves_password_assignments_alone() -> None:
+    # A guess: `token = get_token_from(...)` matches too, and a redacted read that the agent
+    # writes back would damage real code. Known formats and private keys only.
+    text = f"password = {rand(14)}\ntoken = get_token_from(cfg)"
+    out, info = fw.redact(text)
+    assert out == text and info["redacted"] == 0 and info["unredacted"] == {}
+
+
+def test_redact_leaves_guesses_pii_and_clean_text_alone() -> None:
+    text = "token count 1000; mail someone@example.org; hash " + rand(40)
+    out, info = fw.redact(text)
+    assert out == text and info["redacted"] == 0 and info["counts"] == {}
+
+
+def test_redact_reports_secrets_it_could_only_see_after_normalising() -> None:
+    value = "ghp_" + rand(36)
+    hidden = value[:10] + "\u200b" + value[10:]  # a zero-width space splits the key
+    out, info = fw.redact(hidden)
+    assert out == hidden and info["redacted"] == 0
+    assert info["unredacted"] == {"github_token": 1}  # the guard taints the session instead
+
+
+def test_redact_very_deep_input_is_reported_not_crashed() -> None:
+    deep: object = "x"
+    for _ in range(80):
+        deep = [deep]
+    _, info = fw.redact(deep)
+    assert info["partial"] is True

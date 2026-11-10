@@ -46,10 +46,15 @@ _UNKNOWNS: dict[str, tuple[str, ...]] = {
         "What the session read before and after (untrusted web pages, files, tool output).",
         "Whether a person typed these commands and the keyword guard simply matched them.",
     ),
+    "R13": (
+        "Whether the person allowed the questioned call(s), and what they would have sent.",
+        "Which untrusted content the session read, and whether it held instructions to the agent.",
+        "Whether the agent saw the credential: redacted (OG-01) or only marked (OG-02).",
+    ),
 }
 
 # Rules about one agent session: the incident record also carries the advisory session score.
-_SESSION_RULES = frozenset({"R5b", "R12"})
+_SESSION_RULES = frozenset({"R5b", "R12", "R13"})
 
 
 def _session_risk(store: Store, match: Match) -> dict[str, Any] | None:

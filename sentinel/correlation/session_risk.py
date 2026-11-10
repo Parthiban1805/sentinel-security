@@ -51,8 +51,12 @@ OUTBOUND_CLASSES = frozenset(
         "cloud_cli",
         "firewall_secret",
         "firewall_metadata",
+        # TF-01 (ADR-0027): a data-leaving call in a session that read untrusted content and saw
+        # a credential. The gateway asked; it is an outbound attempt.
+        "trifecta",
     }
 )
+TRIFECTA_RULE = "TF-01"
 
 POINTS_SENSITIVE = 2
 POINTS_OUTBOUND = 2
@@ -60,6 +64,7 @@ POINTS_OTHER_DENIAL = 1
 POINTS_ASK = 1
 POINTS_UNAPPROVED_MCP = 2
 POINTS_SEQUENCE = 3
+POINTS_TRIFECTA = 3  # once per session (ADR-0027, rule R13)
 LEVELS = ((2, "low"), (5, "elevated"))  # up to and including; above the last is "high"
 MAX_REASON_LINES = 20  # the rest is summarised ("and N more")
 _SAFE_TEXT = re.compile(r"[^A-Za-z0-9_.\-]")
@@ -128,6 +133,17 @@ def attempt_kind(event: Event, approved: frozenset[str]) -> str | None:
     if cls in OUTBOUND_CLASSES:
         return "outbound"
     return "other"
+
+
+def is_trifecta_gate(event: Event) -> bool:
+    """The gateway asked before a data-leaving call in a tainted session (TF-01, ADR-0027)."""
+    attrs = attrs_of(event)
+    return (
+        event.get("source") == "agent_hook"
+        and event.get("event_type") == "agent_tool_allowed"
+        and attrs.get("decision") == "ask"
+        and attrs.get("rule") == TRIFECTA_RULE
+    )
 
 
 def ordered(events: Iterable[Event]) -> list[Event]:
@@ -209,6 +225,12 @@ def session_risk(events: Iterable[Event], ctx: Context) -> dict[str, Any]:
         reasons.append(
             f"+{POINTS_SEQUENCE} sequence: a sensitive access attempt, then an outbound attempt, "
             "in this session (rule R12)"
+        )
+    if any(is_trifecta_gate(e) for e in seq):
+        points += POINTS_TRIFECTA
+        reasons.append(
+            f"+{POINTS_TRIFECTA} trifecta: untrusted content read and a credential seen in this "
+            "session, then a data-leaving call (rule R13)"
         )
     if len(reasons) > MAX_REASON_LINES:
         extra = len(reasons) - MAX_REASON_LINES
