@@ -321,7 +321,7 @@ unsandboxed shell mode, stdout-only telemetry, no tests).
    **Agent permission manifest** (ADR-0024): a strict, owner-edited TOML policy (filesystem read, write and deny;
    network domains; execution; MCP tools; approvals; expiry; version), pinned like the hooks. It can only tighten the
    gateway. Enforced by a gateway patch the owner applies.
-2. **Context firewall** (ADR-0025): one detector library (secrets, private keys, PII, internal and metadata IPs,
+2. **Built 2026-11-06 (ADR-0025; security review pending).** Hook facts checked in the official docs first. **Context firewall** (ADR-0025): one detector library (secrets, private keys, PII, internal and metadata IPs,
    injection indicators) counting per occurrence and storing no values. Used on prompts (UserPromptSubmit), on data
    sent through MCP, WebFetch and WebSearch, and by the AI assistant pack.
 3. **Sandbox egress allow-list** (ADR-0026, amends ADR-0017): an internal Docker network whose only route out is a

@@ -590,10 +590,13 @@ def verify_probe(
 # Required hook files (a pin also covers every other *.py in the hooks folder).
 AGENT_HOOK_FILES = (
     "_decision_log.py",
+    "_firewall.py",
+    "_manifest.py",
     "_policy.py",
     "bash_guard.py",
     "gateway.py",
     "mcp_log.py",
+    "prompt_guard.py",
     "protect_sensitive_files.py",
     "scan_written_file.py",
     "session_log.py",

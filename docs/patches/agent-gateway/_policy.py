@@ -578,10 +578,41 @@ _RANK = {"allow": 0, "allow_mcp": 0, "ask": 1, "deny": 2}
 def decide(data, home):
     """The decision for one hook payload (dict). Never raises: any internal error denies.
 
-    The built-in rules decide first; the agent manifest (ADR-0024) can then only tighten that
-    decision (allow -> ask or deny, ask -> deny), never loosen it."""
+    Three layers, each of which can only tighten (allow -> ask or deny, ask -> deny): the
+    built-in rules, the agent manifest (ADR-0024), the context firewall (ADR-0025)."""
     base = _base_decide(data, home)
-    if base.decision == "deny" or not _present(os.path.join(home, MANIFEST_NAME)):
+    if base.decision == "deny":
+        return base
+    after = _with_manifest(data, home, base)
+    if after.decision == "deny":
+        return after
+    return _with_firewall(data, after)
+
+
+def _tighter(current, verdict):
+    if verdict is None or _RANK[verdict[0]] <= _RANK.get(current.decision, 0):
+        return current
+    return Decision(verdict[0], verdict[1], verdict[2], verdict[3], current.target)
+
+
+def _with_firewall(data, current):
+    """Data leaving the machine through WebFetch, WebSearch or an MCP tool (ADR-0025). For those
+    tools an error denies (fail closed); other tools are not affected."""
+    tool = str(data.get("tool_name") or "")
+    if tool not in ("WebFetch", "WebSearch") and not tool.startswith("mcp__"):
+        return current
+    try:
+        import _firewall
+
+        tool_input = data.get("tool_input") if isinstance(data.get("tool_input"), dict) else {}
+        return _tighter(current, _firewall.decide_tool(tool, tool_input))
+    except Exception:  # noqa: BLE001 - fail closed for data that would leave the machine
+        return Decision("deny", "FW-99", "firewall_error",
+                        "the context firewall could not check this call", "")  # fmt: skip
+
+
+def _with_manifest(data, home, base):
+    if not _present(os.path.join(home, MANIFEST_NAME)):
         return base
     tool = str(data.get("tool_name") or "")
     try:
@@ -601,9 +632,7 @@ def decide(data, home):
     except Exception:  # noqa: BLE001 - fail closed
         return Decision("deny", "MF-99", "manifest_error",
                         "the agent manifest could not be evaluated", "")  # fmt: skip
-    if extra is None or _RANK[extra[0]] <= _RANK.get(base.decision, 0):
-        return base
-    return Decision(extra[0], extra[1], extra[2], extra[3], base.target)
+    return _tighter(base, extra)
 
 
 def _base_decide(data, home):

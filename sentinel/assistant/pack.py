@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from sentinel import probes
+from sentinel.contextfirewall import scan as firewall_scan
 from sentinel.incidents import summary
 from sentinel.redaction import looks_like_secret
 
@@ -378,6 +379,12 @@ def _check(payload: dict[str, Any], d: _Disguiser) -> None:
     strings = _strings(payload)  # raw strings: JSON escaping would hide backslash paths
     if any(looks_like_secret(s) for s in strings):
         raise PackLeakError("evidence pack looks like it contains a credential; nothing was sent")
+    # The context firewall's detectors too (ADR-0025): private keys, password assignments, emails
+    # and internal or metadata addresses. Nothing of the kind belongs in a disguised pack.
+    found = firewall_scan("\n".join(strings))["categories"]
+    leaked = sorted(c for c in ("secret", "private_key", "pii", "address") if found.get(c))
+    if leaked:
+        raise PackLeakError(f"evidence pack holds {', '.join(leaked)} data; nothing was sent")
     for value in d.by_value:
         if any(_bounded(value).search(s) for s in strings):
             raise PackLeakError(

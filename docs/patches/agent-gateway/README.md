@@ -3,6 +3,18 @@
 Replaces the separate guard hooks with **one gateway hook for every Claude Code tool call**. The owner applies it, because
 `.claude/` is protected from the agent.
 
+## v0.7d update 2: context firewall (ADR-0025)
+- **New files:** `_firewall.py` (a byte-identical copy of `sentinel/contextfirewall.py`) and `prompt_guard.py`.
+- **New hook:** `settings.merged.json` adds a `UserPromptSubmit` hook running `prompt_guard.py`. It blocks a prompt
+  that holds a known credential format or a private key (FW-10). The text still stays in Claude Code's local
+  transcript.
+- **Gateway:** a third layer after the built-in rules and the manifest checks WebFetch, WebSearch and MCP inputs.
+  - **Deny:** a known credential (FW-01) and the cloud-metadata address (FW-02).
+  - **Ask:** guesses, emails, card numbers and internal addresses (FW-03).
+  - **Fail closed:** an error denies these tools (FW-99).
+- **After applying:** start a new conversation, run `uv run pytest -q tests/scenarios/test_s11_agent_policy_hooks.py`,
+  and re-pin (`uv run sentinel agentlog pin-hooks --actor <you>`): there are two new hook files.
+
 ## v0.7d update: agent permission manifest (ADR-0024)
 - **New file `_manifest.py`:** a byte-identical copy of `sentinel/agentmanifest.py`, and a test keeps them
   identical. `apply-patch.bat` now installs it.

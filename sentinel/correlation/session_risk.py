@@ -41,7 +41,18 @@ SENSITIVE_CLASSES = frozenset(
         "state_dir_access",
     }
 )
-OUTBOUND_CLASSES = frozenset({"network_tool", "remote_access", "pipe_to_shell", "cloud_cli"})
+# firewall_*: the gateway refused a tool call that would send a credential or reach a metadata
+# address (ADR-0025): an outbound attempt.
+OUTBOUND_CLASSES = frozenset(
+    {
+        "network_tool",
+        "remote_access",
+        "pipe_to_shell",
+        "cloud_cli",
+        "firewall_secret",
+        "firewall_metadata",
+    }
+)
 
 POINTS_SENSITIVE = 2
 POINTS_OUTBOUND = 2

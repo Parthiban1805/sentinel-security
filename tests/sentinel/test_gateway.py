@@ -31,6 +31,10 @@ T0 = datetime(2026, 11, 3, 12, 0, tzinfo=UTC)
 
 
 def _load(name: str) -> ModuleType:
+    # As gateway.py does: the hooks folder is on sys.path, so _policy can import its siblings
+    # (_manifest, _firewall). Without it the firewall fails closed (FW-99), as it should.
+    if str(GATEWAY) not in sys.path:
+        sys.path.insert(0, str(GATEWAY))
     spec = importlib.util.spec_from_file_location(f"gw_{name}", GATEWAY / f"{name}.py")
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)

@@ -105,8 +105,10 @@ unknown keys silently ignored, no deny lists, no expiry, and identity taken from
 - **Security:**
   - The manifest narrows what a steered agent can touch.
   - It cannot widen anything: the protected paths, blocked commands and kill switch stay in force.
-  - **Identity is the workspace's single Claude Code agent.** The hook input gives no reliable per-agent identity, so
-    one manifest covers the workspace. Sub-agents are not told apart.
+  - **Identity is the workspace's single Claude Code agent.** One manifest covers the workspace, and sub-agents are
+    not told apart yet. Correction (2026-11-06, checked in the hooks documentation): hook input does carry `agent_id`
+    and `agent_type` inside sub-agents, so per-sub-agent sections are possible later. They are self-reported by Claude
+    Code, not an authenticated identity.
 - **Limits:**
   - A `deny` glob on files inside a folder does not stop a search of the whole folder. Content search still respects
     `.gitignore`, and the protected-path rules still apply.
