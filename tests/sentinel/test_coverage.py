@@ -58,7 +58,7 @@ def test_producer_registry_matches_schema_event_types() -> None:
     assert registry <= schema_types  # registry never names a type the schema lacks
     report = coverage.build_report(None, set())
     assert set(report["event_types_with_no_producer"]) == schema_types - registry
-    assert "egress_anomaly" in report["event_types_with_no_producer"]  # needs the endpoint agent
+    assert "egress_anomaly" not in report["event_types_with_no_producer"]  # sandbox proxy, v0.7f
     assert "agent_tool_denied" not in report["event_types_with_no_producer"]  # v0.3b source
 
 

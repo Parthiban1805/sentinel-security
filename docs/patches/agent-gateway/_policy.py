@@ -137,6 +137,11 @@ BASH_RULES = [
      + r"\b(add|add-json|add-from-claude-desktop|remove|reset-project-choices)\b"
      r"|\bclaude\b" + _SEG_END + r"\bconfig\b" + _SEG_END + r"\b(set|add|remove)\b", "deny",
      "adding or changing MCP servers or Claude Code settings is a person's decision"),
+    # A networked sandbox can send data to every allowed host (an HTTPS POST is not visible to the
+    # proxy), so the person confirms each one the agent starts (ADR-0026).
+    ("BG-30", "sandbox_network",
+     r"\bsandbox\b" + _SEG_END + r"\brun\b" + _SEG_END + r"--allow-net\b", "ask",
+     "runs the sandbox with network access to the [sandbox.egress] hosts"),
     ("BG-26", "state_dir_access",
      r"\b(cd|pushd|chdir|set-location|sl|push-location)\b" + _SEG_END + _STATE, "deny",
      "Sentinel's state folder is protected; use the sentinel CLI"),
@@ -421,6 +426,24 @@ def _strict(command, home):
     return None
 
 
+def _sandbox_network(command):
+    """BG-30 on shell words, not on the raw text: quotes and escapes inside the option
+    (`--allow-ne"t"`, PowerShell `--allow-ne`t`) and any `--al...` prefix still count
+    (security review 2026-11-10). The CLI also refuses abbreviations."""
+    for tokens, _piped in _segment_tokens(command):
+        words = [re.sub(r"[\"'`^\\]", "", t).lower() for t in tokens]
+        if "sandbox" not in words:
+            continue
+        i = words.index("sandbox")
+        if "run" in words[i + 1 :] and any(w.startswith("--al") for w in words[i + 1 :]):
+            return Decision(
+                "ask", "BG-30", "sandbox_network",
+                "runs the sandbox with network access to the [sandbox.egress] hosts",
+                command,
+            )  # fmt: skip
+    return None
+
+
 def _command(command, home=""):
     deny, ask = None, None
     for rule_id, cls, pattern, decision, reason in BASH_RULES:
@@ -432,6 +455,7 @@ def _command(command, home=""):
                 ask = ask or hit
     if deny:
         return deny
+    ask = ask or _sandbox_network(command)
     inline = _inline(command)
     if inline is not None:
         return inline._replace(target=command)

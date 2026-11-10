@@ -3,6 +3,18 @@
 Replaces the separate guard hooks with **one gateway hook for every Claude Code tool call**. The owner applies it, because
 `.claude/` is protected from the agent.
 
+## v0.7f update: networked sandbox asks (ADR-0026)
+- **Gateway only (`_policy.py`):** `sentinel sandbox run --allow-net ...` asks first (BG-30). A networked sandbox
+  can send data to every host in `[sandbox.egress]`, so a person confirms each run the agent starts. Without
+  `--allow-net` nothing changes.
+- **After applying:** start a new conversation, run `uv run pytest -q tests/sentinel/test_sandbox_egress.py`, and
+  re-pin the hooks (`uv run sentinel agentlog pin-hooks --actor <you>`; no new files, `_policy.py` changed).
+
+## v0.7e live drill: checked 2026-11-10
+Read output was redacted (OG-01) and the TF-01 prompt appeared; the decision log verified. Events are under
+`uv run sentinel search --source agent_hook --since 1d` after `uv run sentinel run --no-scan`; R13 only fires when a
+data-leaving call is refused after a redaction (an ask that is declined is not a refusal).
+
 ## v0.7e update 2: MCP pinning (ADR-0028)
 - **New file:** `_mcppin.py` (a byte-identical copy of `sentinel/mcppin.py`).
 - **`session_log.py`:** at session start it also compares each pinned MCP server with `.mcp.json` and writes
@@ -28,7 +40,8 @@ Replaces the separate guard hooks with **one gateway hook for every Claude Code 
   (`uv run sentinel agentlog pin-hooks --actor <you>`: two new hook files), then the live drill:
   1. Read a harness-generated canary file: Claude must see `[REDACTED:...]`, not the value.
   2. Run a WebSearch, then a WebFetch: the TF-01 prompt must appear.
-  3. `uv run sentinel agentlog verify`, then `uv run sentinel search` for rule R13.
+  3. `uv run sentinel agentlog verify`, then `uv run sentinel run --no-scan` and
+     `uv run sentinel search --source agent_hook --since 1d`.
   If step 1 shows the value, Claude Code ignored `updatedToolOutput` for that tool: report it (ADR-0027).
 
 ## v0.7d update 2: context firewall (ADR-0025)

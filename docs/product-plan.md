@@ -324,7 +324,7 @@ unsandboxed shell mode, stdout-only telemetry, no tests).
 2. **Built 2026-11-06 (ADR-0025; security review pending).** Hook facts checked in the official docs first. **Context firewall** (ADR-0025): one detector library (secrets, private keys, PII, internal and metadata IPs,
    injection indicators) counting per occurrence and storing no values. Used on prompts (UserPromptSubmit), on data
    sent through MCP, WebFetch and WebSearch, and by the AI assistant pack.
-3. **Sandbox egress allow-list** (ADR-0026, amends ADR-0017): an internal Docker network whose only route out is a
+3. **Built 2026-11-10, live Docker test passed the same day (ADR-0026; security review pending).** **Sandbox egress allow-list** (ADR-0026, amends ADR-0017): an internal Docker network whose only route out is a
    pinned proxy container. Allowed hosts only; DNS resolved by the proxy, with private, loopback, link-local and
    metadata addresses refused; plain-HTTP method and path rules; no TLS interception. Each refusal is an
    `egress_anomaly` event (its first real producer). Off unless `sandbox run --allow-net`.

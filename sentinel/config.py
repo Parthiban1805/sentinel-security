@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from sentinel import egressproxy
+
 
 @dataclass(frozen=True)
 class ProbeHost:
@@ -117,15 +119,31 @@ class SandboxSettings:
     memory: str = "1g"
     cpus: str = "2"
     timeout_s: int = 300
+    egress_allow: tuple[str, ...] = ()  # [sandbox.egress] allow: HTTPS hosts (ADR-0026)
+    egress_http: tuple[str, ...] = ()  # [sandbox.egress] http: "GET host /prefix" rules
+
+
+def _egress(sb: dict[str, Any]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    eg = sb.get("egress", {})
+    try:
+        if not isinstance(eg, dict):
+            raise ValueError("must be a table")
+        egressproxy.Rules.from_config(eg)
+    except ValueError as exc:
+        raise ValueError(f"[sandbox.egress] {exc}") from None
+    return tuple(eg.get("allow", [])), tuple(eg.get("http", []))
 
 
 def _sandbox(data: dict[str, Any]) -> SandboxSettings:
     sb = data.get("sandbox", {})
+    allow, http = _egress(sb)
     s = SandboxSettings(
         image=str(sb.get("image", "")),
         memory=str(sb.get("memory", "1g")),
         cpus=str(sb.get("cpus", "2")),
         timeout_s=int(sb.get("timeout_s", 300)),
+        egress_allow=allow,
+        egress_http=http,
     )
     if not re.fullmatch(r"[0-9]+[kmg]", s.memory):
         raise ValueError("[sandbox] memory must look like 512m or 2g")

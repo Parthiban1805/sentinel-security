@@ -1041,10 +1041,27 @@ def cmd_sandbox_run(args: argparse.Namespace) -> int:
         cpus=settings.cpus,
         timeout_s=sandbox.check_timeout(args.timeout or settings.timeout_s),
     )
-    result = sandbox.run(repo, settings.image, command, limits, keep=args.keep)
+    egress = None
+    if args.allow_net:
+        egress = sandbox.Egress(settings.egress_allow, settings.egress_http)
+    result = sandbox.run(repo, settings.image, command, limits, keep=args.keep, egress=egress)
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)
-    note = f"[sandbox: no network; {result.copied} tracked file(s) copied"
+    if result.egress is None:
+        note = "[sandbox: no network"
+    else:
+        rep = result.egress
+        rules = len(settings.egress_allow) + len(settings.egress_http)
+        note = (f"[sandbox: network through the egress proxy ({rules} rule(s)): "
+                f"{rep.allowed} allowed, {len(rep.refused)} refused")  # fmt: skip
+        for r in rep.refused[:10]:
+            print(
+                f"  refused: {r['reason']} {r['method']} {r['host']}:{r['port']}", file=sys.stderr
+            )
+        stored = _store_events(_store(args), sandbox.egress_events(result, repo, _now()))
+        if stored:
+            note += f", {stored} egress_anomaly event(s) recorded"
+    note += f"; {result.copied} tracked file(s) copied"
     if result.skipped:
         note += f", {len(result.skipped)} left out (secrets, links or large files)"
     note += f"; exit {result.exit_code}" + ("; TIMED OUT" if result.timed_out else "") + "]"
@@ -1062,7 +1079,13 @@ def cmd_sandbox_check(args: argparse.Namespace) -> int:
             print(f"- {p}")
         print("sandbox: NOT ready")
         return 1
-    print(f"sandbox: ready (image {settings.image}, no network)")
+    rules = len(settings.egress_allow) + len(settings.egress_http)
+    net = (
+        f"--allow-net: {rules} egress rule(s)"
+        if rules
+        else "--allow-net: off (no [sandbox.egress])"
+    )
+    print(f"sandbox: ready (image {settings.image}, no network by default; {net})")
     return 0
 
 
@@ -1422,6 +1445,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"sentinel {__version__}")
     parser.add_argument("--home", help="state directory (default: $SENTINEL_HOME or .sentinel)")
     sub = parser.add_subparsers(dest="command", required=True)
+    # (the abbreviation switch is turned off for every parser at the end, see _no_abbrev)
 
     def add(group: Any, name: str, func: Callable[[argparse.Namespace], int], **kw: Any) -> Any:
         p = group.add_parser(name, **kw)
@@ -1585,6 +1609,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = add(sbs, "run", cmd_sandbox_run, help="run one command in the sandbox")
     p.add_argument("--timeout", type=int, help="seconds (default: [sandbox] timeout_s)")
     p.add_argument("--keep", action="store_true", help="keep the scratch copy to read results")
+    p.add_argument(
+        "--allow-net",
+        action="store_true",
+        help="reach only the hosts in [sandbox.egress], through the egress proxy (ADR-0026)",
+    )
     p.add_argument("command", nargs=argparse.REMAINDER, help="-- <command and its arguments>")
     p = add(sbs, "check", cmd_sandbox_check, help="is Docker running and the image pinned and here")
     p = add(sbs, "strict", cmd_sandbox_strict, help="ask before code runs outside the sandbox")
@@ -1761,7 +1790,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out")
     p = add(sub, "watch", cmd_watch, help="verification watch: stale, failed, unverified incidents")
     p.add_argument("--stale-hours", type=int, default=24)
+    _no_abbrev(parser)
     return parser
+
+
+def _no_abbrev(parser: argparse.ArgumentParser) -> None:
+    """argparse accepts `--allow` for `--allow-net` by default, which slips past gateway rules
+    written for the full option (security review 2026-11-10). Turn that off everywhere."""
+    parser.allow_abbrev = False
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            for child in set(action.choices.values()):
+                _no_abbrev(child)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

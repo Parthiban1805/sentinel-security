@@ -54,3 +54,13 @@ toast = true              # Windows notification for new real high/critical inci
 # memory = "1g"
 # cpus = "2"
 # timeout_s = 300
+#
+# Egress allow-list (v0.7f, ADR-0026), used only by `sentinel sandbox run --allow-net`. The sandbox then sits on an
+# internal Docker network whose only exit is a proxy (run from the same image): HTTPS to these hosts only (CONNECT,
+# port 443 unless written as host:port; "*.example.org" covers subdomains, not the bare name), no IP addresses, and
+# any host that resolves to a private, loopback, link-local or cloud-metadata address is refused. Plain HTTP only
+# for GET/HEAD on the listed path prefixes. Each refusal is recorded as an egress_anomaly event. The proxy makes
+# connections to these hosts on the sandbox's behalf: list only hosts you would let the code send data to.
+# [sandbox.egress]
+# allow = ["pypi.org", "files.pythonhosted.org"]
+# http = ["GET deb.debian.org /debian/"]

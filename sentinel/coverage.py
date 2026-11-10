@@ -49,6 +49,7 @@ REAL_PRODUCERS = {
     "canary_triggered": "canary decoys (sentinel canary): copy, tamper, read; not provider use",
     "agent_tool_denied": "agent hook decision log (sentinel run)",
     "agent_tool_allowed": "agent hook decision log, MCP calls only (sentinel run)",
+    "egress_anomaly": "sandbox egress proxy refusals (sandbox run --allow-net)",
 }
 SIMULATION_ONLY = {
     "login_anomaly": "no login-history API for personal GitHub accounts",
